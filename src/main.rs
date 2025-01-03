@@ -63,30 +63,23 @@ struct TcpState {
     is_listening: bool,
 }
 
+#[derive(Default)]
 enum TcpMode {
+    #[default]
     Sending,
     Receiving
 }
 
-impl Default for TcpMode {
-    fn default() -> Self {
-        TcpMode::Sending
-    }
-}
 
-
+#[derive(Default)]
 enum Page {
     Settings,
-    FSW,
+    #[default]
+    Fsw,
     Manual,
     Tcp,
 }
 
-impl Default for Page {
-    fn default() -> Self {
-        Page::FSW
-    }
-}
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -150,7 +143,7 @@ impl State {
         let navigation: Row<Message> = row![
             button(text("FS Watcher").align_x(alignment::Horizontal::Center)).width(Length::Fill).on_press(Message::Navigation(NavigationMessage::GoToFSWPage))
                 .style(|theme: &Theme, status| {
-                    if let Page::FSW = self.page {
+                    if let Page::Fsw = self.page {
                         button::primary(theme, status)
                     } else {
                         button::secondary(theme, status)
@@ -183,7 +176,7 @@ impl State {
         ];
 
         let page: Element<Message> = match self.page {
-            Page::FSW => fsw_page(self),
+            Page::Fsw => fsw_page(self),
             Page::Manual => manual_page(self),
             Page::Tcp => tcp_page(self),
             Page::Settings => settings_page(self),
@@ -199,7 +192,7 @@ impl State {
         match message {
             Message::Navigation(navigation_message) => {
                 match navigation_message {
-                    NavigationMessage::GoToFSWPage => { self.page = Page::FSW; Task::none() },
+                    NavigationMessage::GoToFSWPage => { self.page = Page::Fsw; Task::none() },
                     NavigationMessage::GoToManualPage => { self.page = Page::Manual; Task::none() },
                     NavigationMessage::GoToTcpPage => { self.page = Page::Tcp; Task::none() },
                     NavigationMessage::GoToSettingsPage => { self.page = Page::Settings; Task::none() },
@@ -298,7 +291,7 @@ impl State {
                                 return Task::none();
                             }
                         }
-                        if val.len() == 0 {
+                        if val.is_empty() {
                             self.tcp.reciever_adress = None
                         } else {
                             self.tcp.reciever_adress = Some(val);
@@ -306,7 +299,7 @@ impl State {
                         Task::none()
                     },
                     TcpPageMessage::RecieverPortChanged(val) => {
-                        if val.len() == 0 {
+                        if val.is_empty() {
                             self.tcp.reciever_port = None
                         } else if let Ok(port) = val.parse::<u32>() {
                             self.tcp.reciever_port = Some(port);
@@ -333,7 +326,7 @@ impl State {
                         Task::none()
                     },
                     TcpPageMessage::MyPortChanged(val) => {
-                        if val.len() == 0 {
+                        if val.is_empty() {
                             self.tcp.my_port = None
                         } else if let Ok(port) = val.parse::<u32>() {
                             self.tcp.my_port = Some(port);
@@ -382,8 +375,8 @@ async fn get_dir_path() -> Option<PathBuf> {
 
 fn fsw_page(state: &State) -> Element<Message> {
     let can_run = state.fsw.from.is_some() && state.fsw.to.is_some();
-    let from = state.fsw.from.clone().map(|path| path.into_os_string().into_string().unwrap()).unwrap_or(String::from(""));
-    let to = state.fsw.to.clone().map(|path| path.into_os_string().into_string().unwrap()).unwrap_or(String::from(""));
+    let from = state.fsw.from.as_ref().map(|path| path.clone().into_os_string().into_string().unwrap()).unwrap_or(String::from(""));
+    let to = state.fsw.to.as_ref().map(|path| path.clone().into_os_string().into_string().unwrap()).unwrap_or(String::from(""));
     column![
         text("Directory which the file watcher will monitor"),
         row![
@@ -426,8 +419,8 @@ fn fsw_page(state: &State) -> Element<Message> {
 
 fn manual_page(state: &State) -> Element<Message> {
     let can_run = state.manual.from.is_some() && state.manual.to.is_some() && !state.manual.is_doing_work;
-    let from = state.manual.from.clone().map(|path| path.into_os_string().into_string().unwrap()).unwrap_or(String::from(""));
-    let to = state.manual.to.clone().map(|path| path.into_os_string().into_string().unwrap()).unwrap_or(String::from(""));
+    let from = state.manual.from.as_ref().map(|path| path.clone().into_os_string().into_string().unwrap()).unwrap_or(String::from(""));
+    let to = state.manual.to.as_ref().map(|path| path.clone().into_os_string().into_string().unwrap()).unwrap_or(String::from(""));
     column![
         text("File to encrypt"),
         row![
@@ -485,16 +478,14 @@ fn manual_page(state: &State) -> Element<Message> {
 
 
 fn tcp_page(state: &State) -> Element<Message> {
-    let can_run = true;
-    let is_idle = can_run;
     column![
         row![
             text("Send"),
             horizontal_space().width(10),
-            toggler(if let TcpMode::Sending = state.tcp.mode {false} else {true})
+            toggler(!matches!(state.tcp.mode, TcpMode::Sending))
                 .spacing(0)
                 .size(20)
-                .on_toggle_maybe(if is_idle {Some(|_| Message::Tcp(TcpPageMessage::ToggleMode))} else {None}),
+                .on_toggle_maybe(Some(|_| Message::Tcp(TcpPageMessage::ToggleMode))),
             horizontal_space().width(10),
             text("Receive")
         ].align_y(alignment::Vertical::Center),
@@ -512,11 +503,26 @@ fn tcp_page(state: &State) -> Element<Message> {
         .into()
 }
 
+fn valid_address(address: &Option<String>) -> bool {
+    if address.is_none() {
+        return false;
+    }
+    return true;
+}
+
+fn valid_port(port: &Option<u32>) -> bool {
+    if port.is_none() {
+        return false;
+    }
+    return true;
+}
+
 fn tcp_send_widget(state: &State) -> Element<Message> {
-    let file = state.tcp.file.clone().map(|path| path.into_os_string().into_string().unwrap()).unwrap_or(String::from(""));
-    let address = state.tcp.reciever_adress.clone().unwrap_or(String::from(""));
+    let file = state.tcp.file.as_ref().map(|path| path.clone().into_os_string().into_string().unwrap()).unwrap_or(String::from(""));
+    let address = state.tcp.reciever_adress.as_deref().unwrap_or("");
     let port = state.tcp.reciever_port.map(|val| val.to_string()).unwrap_or(String::from(""));
     let is_sending = state.tcp.is_sending;
+    let can_send = valid_address(&state.tcp.reciever_adress) && valid_port(&state.tcp.reciever_port) && !is_sending;
     column![
         text("File to send"),
         row![
@@ -544,12 +550,14 @@ fn tcp_send_widget(state: &State) -> Element<Message> {
         vertical_space().height(10),
         container(
             button(
-                text("Send")
+                text(
+                    if state.tcp.is_sending {"Sending..."} else {"Send"}
+                )
                     .align_x(alignment::Horizontal::Center)
             )
                 .width(Length::Shrink)
                 .on_press_maybe(
-                    if !state.tcp.is_sending {
+                    if can_send {
                         Some(Message::Tcp(TcpPageMessage::Send))
                     } else {
                         None
@@ -565,7 +573,8 @@ fn tcp_send_widget(state: &State) -> Element<Message> {
 fn tcp_recieve_widget(state: &State) -> Element<Message> {
     let port = state.tcp.my_port.map(|val| val.to_string()).unwrap_or(String::from(""));
     let is_listening = state.tcp.is_listening;
-    let to = state.tcp.dir_to_store_files.clone().map(|path| path.into_os_string().into_string().unwrap()).unwrap_or(String::from(""));
+    let to = state.tcp.dir_to_store_files.as_ref().map(|path| path.clone().into_os_string().into_string().unwrap()).unwrap_or(String::from(""));
+    let can_start_listening = valid_port(&state.tcp.my_port) && !is_listening;
     column![
         text("Directory to save recieved files to"),
         row![
@@ -584,20 +593,22 @@ fn tcp_recieve_widget(state: &State) -> Element<Message> {
             text(" : "),
             text_input("Port", &port)
                 .on_input_maybe(if !is_listening {
-                    Some(|value| Message::Tcp(TcpPageMessage::RecieverPortChanged(value)))
+                    Some(|value| Message::Tcp(TcpPageMessage::MyPortChanged(value)))
                 } else { None })
                 .width(Length::Fill),
         ].align_y(alignment::Vertical::Center),
         vertical_space().height(10),
         container(
             button(
-                text("Start listening")
+                text(if is_listening {"Stop listening"} else {"Start Listening"})
                     .align_x(alignment::Horizontal::Center)
             )
                 .width(Length::Shrink)
                 .on_press_maybe(
-                    if !state.tcp.is_sending {
-                        Some(Message::Tcp(TcpPageMessage::Send))
+                    if can_start_listening {
+                        Some(Message::Tcp(TcpPageMessage::StartListening))
+                    } else if is_listening {
+                        Some(Message::Tcp(TcpPageMessage::StopListening))
                     } else {
                         None
                     }
@@ -611,12 +622,12 @@ fn tcp_recieve_widget(state: &State) -> Element<Message> {
 fn settings_page(state: &State) -> Element<Message> {
     column![
         text_input("Key", &state.key)
-            .on_input(|val| Message::KeyChanged(val))
+            .on_input(Message::KeyChanged)
             .width(Length::Fill),
         vertical_space().height(10),
         row![
             text("Encryption/decryption algoritham: "),
-            pick_list(vec![String::from("Alg1"), String::from("Alg2")], Some(state.algoritham.clone()), |option| Message::AlgorithamChanged(option.into())),
+            pick_list(vec![String::from("Alg1"), String::from("Alg2")], Some(state.algoritham.clone()), Message::AlgorithamChanged),
         ].align_y(alignment::Vertical::Center)
     ]
         .padding([50, 100])
