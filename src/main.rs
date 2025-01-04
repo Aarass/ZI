@@ -1,7 +1,9 @@
-use std::{path::PathBuf, thread, time};
+use tokio::sync::oneshot;
+use tokio::sync::mpsc;
+use std::path::PathBuf;
 use rfd::AsyncFileDialog;
 use iced::{alignment, widget::{button, column, container, horizontal_space, pick_list, row, text, text_input, toggler, vertical_space, Column, Row }, Element, Length, Size, Task, Theme };
-
+use notify::{recommended_watcher, RecursiveMode, Watcher};
 use tokio::time::{sleep, Duration};
 
 async fn fake_work() -> i32 {
@@ -10,19 +12,12 @@ async fn fake_work() -> i32 {
 }
 
 #[tokio::main]
-async fn main() {
-    let task = tokio::spawn(async {
-        thread::sleep(time::Duration::from_millis(5000));
-        println!("Hello")
-    });
-
-    let _ = iced::application("ZI", State::update, State::view)
+async fn main() -> std::result::Result<(), iced::Error> {
+    iced::application("ZI", State::update, State::view)
         .theme(|_| iced::Theme::Dark)
         .window_size(Size::new(600.0, 400.0))
         .centered()
-        .run();
-
-    task.await.unwrap();
+        .run()
 }
 
 #[derive(Default)]
@@ -33,6 +28,9 @@ struct State {
     tcp: TcpState,
     algoritham: String,
     key: String,
+
+    watcher: Option<Box<dyn Watcher>>,
+    end_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 #[derive(Default)]
@@ -107,6 +105,8 @@ pub enum FSWPageMessage {
     DirToSaveToResult(Option<PathBuf>),
     TurnOn,
     TurnOff,
+    WatchingStarted,
+    WatchingEnded,
 }
 
 #[derive(Debug, Clone)]
@@ -219,10 +219,92 @@ impl State {
                         Task::none()
                     },
                     FSWPageMessage::TurnOn => {
+                        let dir_to_watch = match &self.fsw.from {
+                            Some(path_buff) => path_buff.to_owned(),
+                            None => {
+                                println!("There is no selected directory to watch");
+                                return Task::none()
+                            },
+                        };
+
+                        let (end_tx, end_rx) = oneshot::channel::<()>();
+                        let (event_tx, mut event_rx) = mpsc::channel(10);
+
+                        let mut watcher = recommended_watcher(move |res| {
+                            match res {
+                                Ok(event) => {
+                                    match event_tx.blocking_send(event){
+                                        Ok(_) => println!("Successfully sent."),
+                                        Err(_) => println!("Send error. A send operation can only fail if the receiving end of a channel is disconnected, implying that the data could never be received. The error contains the data being sent as a payload so it can be recovered."),
+                                    }
+                                },
+                                Err(e) => println!("Event handler recieved error: {:?}", e),
+                            }
+                        }).expect("Couldn't create watcher");
+
+                        watcher.watch(&dir_to_watch, RecursiveMode::NonRecursive).expect("Couldn't start watcher");
+
+                        self.watcher = Some(Box::new(watcher));
+                        self.end_tx = Some(end_tx);
+
+                        tokio::spawn(async move {
+                            while let Some(event) = event_rx.recv().await {
+                                println!("{:?}", event)
+                                // tokio::spawn(async move { process(event) });
+                            };
+                            println!("Channel closed")
+                        });
+
+                        // tokio::spawn(async move {
+                        //     tokio::select! {
+                        //         _ = async {
+                        //             while let Some(event) = event_rx.recv().await {
+                        //                 println!("{:?}", event)
+                        //                 // tokio::spawn(async move { process(event) });
+                        //             };
+                        //         } => {}
+                        //         _ = end_rx => {
+                        //             println!("Recieved end signal");
+                        //         }
+                        //     }
+                        // });
+
+                        Task::done(Message::FSW(FSWPageMessage::WatchingStarted))
+                    },
+                    FSWPageMessage::TurnOff => {
+                        let dir_to_watch = match &self.fsw.from {
+                            Some(path_buff) => path_buff.to_owned(),
+                            None => {
+                                println!("There is no selected directory to watch");
+                                return Task::none()
+                            },
+                        };
+
+                        if let Some(w) = self.watcher.as_mut() {
+                            if w.unwatch(&dir_to_watch).is_ok() {
+                                self.watcher.take();
+                                println!("Unwatched");
+                            } else {
+                                println!("Couldn't unwatch");
+                            }
+                        }
+
+                        // if let Some(tx) = self.end_tx.take() {
+                        //     match tx.send(()) {
+                        //         Ok(_) => (),
+                        //         Err(_) => {
+                        //             println!("Couldn't send end signal")
+                        //         },
+                        //     }
+                        // }
+
+                        Task::done(Message::FSW(FSWPageMessage::WatchingEnded))
+                    },
+                    FSWPageMessage::WatchingStarted => {
                         self.fsw.is_on = true;
                         Task::none()
                     },
-                    FSWPageMessage::TurnOff => {
+                    FSWPageMessage::WatchingEnded => {
                         self.fsw.is_on = false;
                         Task::none()
                     },
@@ -507,14 +589,14 @@ fn valid_address(address: &Option<String>) -> bool {
     if address.is_none() {
         return false;
     }
-    return true;
+    true
 }
 
 fn valid_port(port: &Option<u32>) -> bool {
     if port.is_none() {
         return false;
     }
-    return true;
+    true
 }
 
 fn tcp_send_widget(state: &State) -> Element<Message> {
@@ -535,7 +617,7 @@ fn tcp_send_widget(state: &State) -> Element<Message> {
         ],
         vertical_space().height(10),
         row![
-            text_input("Address", &address)
+            text_input("Address", address)
                 .on_input_maybe(if !is_sending {
                     Some(|value| Message::Tcp(TcpPageMessage::RecieverAddressChanged(value)))
                 } else { None })

@@ -4580,6 +4580,7 @@ dependencies = [
 name = "zi"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "iced",
  "notify",
  "rfd",
