@@ -1,4 +1,3 @@
-use tokio::sync::oneshot;
 use tokio::sync::mpsc;
 use std::path::PathBuf;
 use rfd::AsyncFileDialog;
@@ -28,16 +27,15 @@ struct State {
     tcp: TcpState,
     algoritham: String,
     key: String,
-
-    watcher: Option<Box<dyn Watcher>>,
-    end_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 #[derive(Default)]
 struct FSWState {
     from: Option<PathBuf>,
     to: Option<PathBuf>,
-    is_on: bool
+    is_on: bool,
+
+    watcher: Option<Box<dyn Watcher>>,
 }
 
 #[derive(Default)]
@@ -227,7 +225,6 @@ impl State {
                             },
                         };
 
-                        let (end_tx, end_rx) = oneshot::channel::<()>();
                         let (event_tx, mut event_rx) = mpsc::channel(10);
 
                         let mut watcher = recommended_watcher(move |res| {
@@ -244,8 +241,7 @@ impl State {
 
                         watcher.watch(&dir_to_watch, RecursiveMode::NonRecursive).expect("Couldn't start watcher");
 
-                        self.watcher = Some(Box::new(watcher));
-                        self.end_tx = Some(end_tx);
+                        self.fsw.watcher = Some(Box::new(watcher));
 
                         tokio::spawn(async move {
                             while let Some(event) = event_rx.recv().await {
@@ -254,20 +250,6 @@ impl State {
                             };
                             println!("Channel closed")
                         });
-
-                        // tokio::spawn(async move {
-                        //     tokio::select! {
-                        //         _ = async {
-                        //             while let Some(event) = event_rx.recv().await {
-                        //                 println!("{:?}", event)
-                        //                 // tokio::spawn(async move { process(event) });
-                        //             };
-                        //         } => {}
-                        //         _ = end_rx => {
-                        //             println!("Recieved end signal");
-                        //         }
-                        //     }
-                        // });
 
                         Task::done(Message::FSW(FSWPageMessage::WatchingStarted))
                     },
@@ -280,23 +262,14 @@ impl State {
                             },
                         };
 
-                        if let Some(w) = self.watcher.as_mut() {
+                        if let Some(w) = self.fsw.watcher.as_mut() {
                             if w.unwatch(&dir_to_watch).is_ok() {
-                                self.watcher.take();
+                                self.fsw.watcher.take();
                                 println!("Unwatched");
                             } else {
                                 println!("Couldn't unwatch");
                             }
                         }
-
-                        // if let Some(tx) = self.end_tx.take() {
-                        //     match tx.send(()) {
-                        //         Ok(_) => (),
-                        //         Err(_) => {
-                        //             println!("Couldn't send end signal")
-                        //         },
-                        //     }
-                        // }
 
                         Task::done(Message::FSW(FSWPageMessage::WatchingEnded))
                     },
