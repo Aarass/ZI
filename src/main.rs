@@ -1,3 +1,5 @@
+mod hash;
+
 use iced::{
     alignment,
     widget::{
@@ -27,6 +29,10 @@ async fn main() -> std::result::Result<(), iced::Error> {
         .window_size(Size::new(600.0, 400.0))
         .centered()
         .run()
+}
+
+fn encrypt_data(data: &Vec<u8>) -> Vec<u8> {
+    data.clone()
 }
 
 impl State {
@@ -278,11 +284,23 @@ impl State {
 
                     let address = format!(
                         "{}:{}",
-                        self.tcp.reciever_adress.as_ref().expect("c c c"),
-                        self.tcp.reciever_port.as_ref().expect("c c c")
+                        self.tcp
+                            .reciever_adress
+                            .as_ref()
+                            .expect("UI logic should not allow this"),
+                        self.tcp
+                            .reciever_port
+                            .as_ref()
+                            .expect("UI logic should not allow this")
                     );
 
-                    let file_path = self.tcp.file.as_ref().expect("c c c").to_owned();
+                    let file_path = self
+                        .tcp
+                        .file
+                        .as_ref()
+                        .expect("UI logic should not allow this")
+                        .to_owned();
+
                     let file_name = file_path
                         .file_name()
                         .expect("Couldn't get file name")
@@ -291,121 +309,160 @@ impl State {
 
                     Task::perform(
                         async move {
-                            tokio::spawn(async move {
-                                let mut file = match tokio::fs::File::open(file_path).await {
-                                    Ok(s) => s,
-                                    Err(err) => {
-                                        println!("Error reading the file when trying to send it over tcp: {:?}", err);
-                                        return;
-                                    }
-                                };
+                            let mut file = match tokio::fs::File::open(file_path).await {
+                                Ok(s) => s,
+                                Err(err) => {
+                                    println!("Error opening the file when trying to send it over tcp: {:?}", err);
+                                    return;
+                                }
+                            };
 
-                                let mut content = vec![];
-                                match file.read_to_end(&mut content).await {
-                                    Ok(_) => (),
-                                    Err(err) => {
-                                        println!("Error reading the file when trying to send it over tcp: {:?}", err);
-                                        return;
-                                    }
-                                };
+                            let mut file_name_leb128_buf: Vec<u8> = Vec::new();
+                            let file_name_leb128_bytes = match leb128::write::unsigned(
+                                &mut file_name_leb128_buf,
+                                file_name.len().try_into().unwrap(),
+                            ) {
+                                Ok(b) => b,
+                                Err(err) => {
+                                    println!("Error encoding string length-prefix {:?}", err);
+                                    return;
+                                }
+                            };
+                            let file_name_prefix = &file_name_leb128_buf[..file_name_leb128_bytes];
 
-                                let file_size;
-                                match file.metadata().await {
-                                    Ok(metadata) => file_size = metadata.len(),
-                                    Err(err) => {
-                                        println!("Error trying to read file metadata: {:?}", err);
-                                        return;
-                                    }
-                                };
+                            let file_size;
+                            match file.metadata().await {
+                                Ok(metadata) => file_size = metadata.len(),
+                                Err(err) => {
+                                    println!("Error trying to read file metadata: {:?}", err);
+                                    return;
+                                }
+                            };
 
-                                let mut stream = match TcpStream::connect(address).await {
-                                    Ok(stream) => stream,
-                                    Err(err) => {
-                                        println!(
-                                            "Error opening connection to the server {:?}",
-                                            err
-                                        );
-                                        return;
-                                    }
-                                };
+                            let mut file_content =
+                                Vec::with_capacity(file_size.try_into().unwrap());
+                            match file.read_to_end(&mut file_content).await {
+                                Ok(_) => (),
+                                Err(err) => {
+                                    println!("Error reading the file when trying to send it over tcp: {:?}", err);
+                                    return;
+                                }
+                            };
 
-                                let mut buf: Vec<u8> = Vec::new();
-                                let bytes = match leb128::write::unsigned(
-                                    &mut buf,
-                                    file_name.len().try_into().expect("c c c"),
-                                ) {
-                                    Ok(b) => b,
-                                    Err(err) => {
-                                        println!("Error encoding string length prefix {:?}", err);
-                                        return;
-                                    }
-                                };
+                            let encrypted_file_content = encrypt_data(&file_content);
+                            let hash = hash::hash_file(&encrypted_file_content);
 
-                                match stream.write_all(&buf[..bytes]).await {
-                                    Ok(_) => {
-                                        println!("Successfully sent file name size")
-                                    }
-                                    Err(err) => {
-                                        println!(
-                                            "Error sending file name size over tcp connection: {:?}",
-                                            err
-                                        );
-                                        return;
-                                    }
-                                };
+                            match TcpStream::connect(address).await {
+                                Ok(mut stream) => {
+                                    match stream.write_all(file_name_prefix).await {
+                                        Ok(_) => {
+                                            println!("Successfully sent file name length-prefix")
+                                        }
+                                        Err(err) => {
+                                            println!(
+                                                "Error sending file name length-prefix over tcp connection: {:?}",
+                                                err
+                                            );
+                                            return;
+                                        }
+                                    };
 
-                                match stream.write_all(file_name.as_bytes()).await {
-                                    Ok(_) => {
-                                        println!("Successfully sent file name")
-                                    }
-                                    Err(err) => {
-                                        println!(
-                                            "Error sending file name over tcp connection: {:?}",
-                                            err
-                                        );
-                                        return;
-                                    }
-                                };
+                                    match stream.write_all(file_name.as_bytes()).await {
+                                        Ok(_) => {
+                                            println!("Successfully sent file name")
+                                        }
+                                        Err(err) => {
+                                            println!(
+                                                "Error sending file name over tcp connection: {:?}",
+                                                err
+                                            );
+                                            return;
+                                        }
+                                    };
 
-                                match stream.write_i64_le(file_size.try_into().unwrap()).await {
-                                    Ok(_) => {
-                                        println!("Successfully sent file size: {:?}", file_size);
-                                    }
-                                    Err(err) => {
-                                        println!(
-                                            "Error sending file size over tcp connection: {:?}",
-                                            err
-                                        );
-                                        return;
-                                    }
-                                };
+                                    match stream.write_i64_le(file_size.try_into().unwrap()).await {
+                                        Ok(_) => {
+                                            println!(
+                                                "Successfully sent file size: {:?}",
+                                                file_size
+                                            );
+                                        }
+                                        Err(err) => {
+                                            println!(
+                                                "Error sending file size over tcp connection: {:?}",
+                                                err
+                                            );
+                                            return;
+                                        }
+                                    };
 
-                                match stream.write_all(&content).await {
-                                    Ok(_) => {
-                                        println!("Successfully sent file content")
+                                    match stream.write_i32_le(hash.len().try_into().unwrap()).await
+                                    {
+                                        Ok(_) => {
+                                            println!(
+                                                "Succesffully sent hash size {:?}",
+                                                hash.len()
+                                            );
+                                        }
+                                        Err(err) => {
+                                            println!(
+                                                "Error sending hash size over tcp connection: {:?}",
+                                                err
+                                            );
+                                            return;
+                                        }
                                     }
-                                    Err(err) => {
-                                        println!(
-                                            "Error sending file content over tcp connection: {:?}",
-                                            err
-                                        );
-                                        return;
-                                    }
-                                };
 
-                                match stream.shutdown().await {
-                                    Ok(_) => {
-                                        println!("Successfully closed connection");
+                                    match stream.write_all(&hash).await {
+                                        Ok(_) => {
+                                            println!(
+                                                "Successfully sent hash: {:?}",
+                                                String::from_utf8_lossy(&hash)
+                                            );
+                                        }
+                                        Err(err) => {
+                                            println!(
+                                                "Error sending hash over tcp connection: {:?}",
+                                                err
+                                            );
+                                            return;
+                                        }
                                     }
-                                    Err(err) => {
-                                        println!(
-                                            "Error sending file contents over tcp connection: {:?}",
-                                            err
-                                        );
-                                        return;
-                                    }
-                                };
-                            });
+
+                                    match stream.write_all(&encrypted_file_content).await {
+                                        Ok(_) => {
+                                            println!(
+                                                "Successfully sent encrypted file content: {:?}",
+                                                String::from_utf8_lossy(&encrypted_file_content)
+                                            )
+                                        }
+                                        Err(err) => {
+                                            println!(
+                                                "Error sending file content over tcp connection: {:?}",
+                                                err
+                                            );
+                                            return;
+                                        }
+                                    };
+
+                                    match stream.shutdown().await {
+                                        Ok(_) => {
+                                            println!("Successfully closed connection");
+                                        }
+                                        Err(err) => {
+                                            println!(
+                                                "Error sending file contents over tcp connection: {:?}",
+                                                err
+                                            );
+                                            return;
+                                        }
+                                    };
+                                }
+                                Err(err) => {
+                                    println!("Error opening connection to the server {:?}", err);
+                                    return;
+                                }
+                            };
                         },
                         |_| Message::Tcp(TcpPageMessage::Sent),
                     )
@@ -441,7 +498,7 @@ impl State {
                         let listener =
                             match TcpListener::bind(format!("127.0.0.1:{:?}", my_port)).await {
                                 Ok(listener) => {
-                                    println!("Successfully stared tcp server");
+                                    println!("Successfully started tcp server");
                                     listener
                                 }
                                 Err(_) => {
@@ -459,50 +516,47 @@ impl State {
                                 }
                             };
 
-                            tokio::spawn(async move {
-                                println!("Accepted connection: {:?}, {:?}", addr, socket);
+                            println!("Accepted connection: {:?}", addr);
 
+                            tokio::spawn(async move {
+                                // Dont look here
+                                // -----------------------------------------
                                 let mut socket = socket.into_std().unwrap();
                                 socket.set_nonblocking(false).unwrap();
 
                                 let file_name_len = leb128::read::unsigned(&mut socket).unwrap();
 
-                                println!("Lenght prefix: {:?}", file_name_len);
+                                println!("Length-prefix: {:?}", file_name_len);
 
                                 socket.set_nonblocking(false).unwrap();
                                 let mut socket = TcpStream::from_std(socket).unwrap();
+                                // ---------------------------------------------------
 
                                 let mut file_name_buf =
                                     vec![0u8; file_name_len.try_into().unwrap()];
-
-                                println!("{:?}", file_name_buf.len());
-
-                                match socket.read_exact(&mut file_name_buf).await {
-                                    Ok(count) => {
-                                        println!("Read {:?} bytes", count);
-                                    }
-                                    Err(err) => {
-                                        println!(
-                                            "Error reading data from tcp connection: {:?}",
-                                            err
-                                        );
-                                        return;
-                                    }
-                                };
+                                socket.read_exact(&mut file_name_buf).await.unwrap();
 
                                 let file_name = std::str::from_utf8(&file_name_buf).unwrap();
                                 println!("File name: {:?}", file_name);
 
-                                let content_len = socket.read_i64_le().await.unwrap();
-                                println!("Content lenght: {:?}", content_len);
+                                let encrypted_content_len = socket.read_i64_le().await.unwrap();
+                                println!("Content lenght: {:?}", encrypted_content_len);
+
+                                let hash_len = socket.read_i32_le().await.unwrap();
+                                println!("Hash lenght: {:?}", hash_len);
+
+                                let mut hash_buffer = vec![0_u8; hash_len.try_into().unwrap()];
+                                socket.read_exact(&mut hash_buffer).await.unwrap();
+
+                                let hash = String::from_utf8_lossy(&hash_buffer);
+                                println!("Recieved hash: {:?}", hash);
 
                                 let mut content_buffer =
-                                    vec![0_u8; content_len.try_into().unwrap()];
-
+                                    vec![0_u8; encrypted_content_len.try_into().unwrap()];
                                 socket.read_exact(&mut content_buffer).await.unwrap();
-                                let content = String::from_utf8_lossy(&content_buffer);
 
-                                println!("Recived data: {:?}", content);
+                                let encrypted_content = String::from_utf8_lossy(&content_buffer);
+                                println!("Recived encrypted data: {:?}", encrypted_content);
                             });
                         }
                     });
@@ -515,7 +569,7 @@ impl State {
                 TcpPageMessage::StopListening => {
                     if let Some(handle) = self.tcp.join_handle.take() {
                         handle.abort();
-                        print!("Successfully aborted task")
+                        println!("Successfully stoped listening for tcp connections");
                     } else {
                         println!("There is no join handle in state")
                     }
@@ -907,7 +961,6 @@ struct ManualState {
     is_doing_work: bool,
 }
 
-#[derive(Default)]
 struct TcpState {
     mode: TcpMode,
     //------------------------------------------
@@ -921,6 +974,35 @@ struct TcpState {
     is_listening: bool,
 
     join_handle: Option<JoinHandle<()>>,
+}
+
+impl Default for TcpState {
+    fn default() -> Self {
+        let mut base = PathBuf::new();
+        base.push(r"C:\");
+        base.push("Users");
+        base.push("Aleksandar");
+        base.push("Documents");
+
+        let mut file = base.clone();
+        file.push("fsw_1source");
+        file.push("New Text Document.txt");
+
+        let mut dir = base.clone();
+        dir.push("fsw_2dest");
+
+        Self {
+            mode: Default::default(),
+            file: Some(file),
+            reciever_adress: Some("127.0.0.1".to_owned()),
+            reciever_port: Some(80),
+            is_sending: Default::default(),
+            dir_to_store_files: Some(dir),
+            my_port: Some(80),
+            is_listening: Default::default(),
+            join_handle: Default::default(),
+        }
+    }
 }
 
 #[derive(Default)]
