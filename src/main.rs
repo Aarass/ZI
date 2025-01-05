@@ -367,9 +367,9 @@ impl State {
                                     }
                                 };
 
-                                match stream.write_u64(file_size).await {
+                                match stream.write_i64_le(file_size.try_into().unwrap()).await {
                                     Ok(_) => {
-                                        println!("Successfully sent file size")
+                                        println!("Successfully sent file size: {:?}", file_size);
                                     }
                                     Err(err) => {
                                         println!(
@@ -493,7 +493,7 @@ impl State {
                                 let file_name = std::str::from_utf8(&file_name_buf).unwrap();
                                 println!("File name: {:?}", file_name);
 
-                                let content_len = socket.read_u64().await.unwrap();
+                                let content_len = socket.read_i64_le().await.unwrap();
                                 println!("Content lenght: {:?}", content_len);
 
                                 let mut content_buffer =
