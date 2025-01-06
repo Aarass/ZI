@@ -11,3 +11,4 @@ tokio = { version = "1.42.0",  features = ["full"] }
 futures ={ version = "0.3.31"}
 leb128 = "0.2.5"
 tiger = "0.2.1"
+magic-crypt = "4.0.1"

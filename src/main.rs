@@ -8,10 +8,12 @@ use iced::{
     },
     Element, Length, Size, Task, Theme,
 };
-use leb128;
 use notify::{recommended_watcher, RecursiveMode, Watcher};
 use rfd::AsyncFileDialog;
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -30,9 +32,56 @@ async fn main() -> std::result::Result<(), iced::Error> {
         .centered()
         .run()
 }
+trait Algoritham {
+    fn encrypt(&self, data: &[u8]) -> Vec<u8>;
+    fn decrypt(&self, data: &[u8]) -> Vec<u8>;
+}
 
-fn encrypt_data(data: &Vec<u8>) -> Vec<u8> {
-    data.clone()
+struct Enigma {}
+impl Algoritham for Enigma {
+    fn encrypt(&self, data: &[u8]) -> Vec<u8> {
+        data.to_owned()
+    }
+
+    fn decrypt(&self, data: &[u8]) -> Vec<u8> {
+        data.to_owned()
+    }
+}
+
+struct XXTEA {}
+impl Algoritham for XXTEA {
+    fn encrypt(&self, data: &[u8]) -> Vec<u8> {
+        data.to_owned()
+    }
+
+    fn decrypt(&self, data: &[u8]) -> Vec<u8> {
+        data.to_owned()
+    }
+}
+
+use magic_crypt::{new_magic_crypt, MagicCryptTrait};
+
+struct StdAlg {}
+impl Algoritham for StdAlg {
+    fn encrypt(&self, data: &[u8]) -> Vec<u8> {
+        let mc = new_magic_crypt!("magickey", 256);
+        mc.encrypt_bytes_to_bytes(data)
+    }
+
+    fn decrypt(&self, data: &[u8]) -> Vec<u8> {
+        let mc = new_magic_crypt!("magickey", 256);
+        mc.decrypt_bytes_to_bytes(data).unwrap()
+    }
+}
+
+fn get_algoritham(alg: &Arc<Mutex<AlgorithamOption>>) -> Box<dyn Algoritham + Send> {
+    let option = alg.lock().unwrap().to_owned();
+    println!("Choosed: {:?}", option);
+    match option {
+        AlgorithamOption::Enigma => Box::new(Enigma {}),
+        AlgorithamOption::XXTEA => Box::new(XXTEA {}),
+        AlgorithamOption::Std => Box::new(StdAlg {}),
+    }
 }
 
 impl State {
@@ -307,6 +356,8 @@ impl State {
                         .to_string_lossy()
                         .to_string();
 
+                    let algoritham_option = self.algoritham_option.clone();
+
                     Task::perform(
                         async move {
                             let mut file = match tokio::fs::File::open(file_path).await {
@@ -330,9 +381,8 @@ impl State {
                             };
                             let file_name_prefix = &file_name_leb128_buf[..file_name_leb128_bytes];
 
-                            let file_size;
-                            match file.metadata().await {
-                                Ok(metadata) => file_size = metadata.len(),
+                            let file_size = match file.metadata().await {
+                                Ok(metadata) => metadata.len(),
                                 Err(err) => {
                                     println!("Error trying to read file metadata: {:?}", err);
                                     return;
@@ -349,7 +399,9 @@ impl State {
                                 }
                             };
 
-                            let encrypted_file_content = encrypt_data(&file_content);
+                            let alg = get_algoritham(&algoritham_option);
+                            let encrypted_file_content = alg.encrypt(&file_content);
+
                             let hash = hash::hash_file(&encrypted_file_content);
 
                             match TcpStream::connect(address).await {
@@ -494,6 +546,8 @@ impl State {
                         .my_port
                         .expect("My port is none when trying to start tcp server");
 
+                    let algoritham_option = self.algoritham_option.clone();
+
                     let handle = tokio::spawn(async move {
                         let listener =
                             match TcpListener::bind(format!("127.0.0.1:{:?}", my_port)).await {
@@ -518,6 +572,8 @@ impl State {
 
                             println!("Accepted connection: {:?}", addr);
 
+                            let algoritham_option = algoritham_option.clone();
+
                             tokio::spawn(async move {
                                 // Dont look here
                                 // -----------------------------------------
@@ -539,8 +595,8 @@ impl State {
                                 let file_name = std::str::from_utf8(&file_name_buf).unwrap();
                                 println!("File name: {:?}", file_name);
 
-                                let encrypted_content_len = socket.read_i64_le().await.unwrap();
-                                println!("Content lenght: {:?}", encrypted_content_len);
+                                let file_len = socket.read_i64_le().await.unwrap();
+                                println!("Content lenght: {:?}", file_len);
 
                                 let hash_len = socket.read_i32_le().await.unwrap();
                                 println!("Hash lenght: {:?}", hash_len);
@@ -551,12 +607,20 @@ impl State {
                                 let hash = String::from_utf8_lossy(&hash_buffer);
                                 println!("Recieved hash: {:?}", hash);
 
-                                let mut content_buffer =
-                                    vec![0_u8; encrypted_content_len.try_into().unwrap()];
-                                socket.read_exact(&mut content_buffer).await.unwrap();
+                                let mut encrypted_content = Vec::new();
+                                socket.read_to_end(&mut encrypted_content).await.unwrap();
 
-                                let encrypted_content = String::from_utf8_lossy(&content_buffer);
-                                println!("Recived encrypted data: {:?}", encrypted_content);
+                                println!(
+                                    "Recived encrypted data: {:?}",
+                                    String::from_utf8_lossy(&encrypted_content)
+                                );
+
+                                let alg = get_algoritham(&algoritham_option);
+                                let decrypted_file_content = alg.decrypt(&encrypted_content);
+                                println!(
+                                    "Decrypted data: {:?}",
+                                    String::from_utf8_lossy(&decrypted_file_content)
+                                );
                             });
                         }
                     });
@@ -579,7 +643,7 @@ impl State {
                 }
             },
             Message::AlgorithamChanged(val) => {
-                self.algoritham = val;
+                *self.algoritham_option.lock().unwrap() = val;
                 Task::none()
             }
             Message::KeyChanged(val) => {
@@ -914,7 +978,26 @@ fn tcp_recieve_widget(state: &State) -> Element<Message> {
     .into()
 }
 
+#[derive(Clone, PartialEq, Default, Debug)]
+pub enum AlgorithamOption {
+    #[default]
+    Std,
+    Enigma,
+    XXTEA,
+}
+
+impl ToString for AlgorithamOption {
+    fn to_string(&self) -> String {
+        match self {
+            AlgorithamOption::Std => String::from("Standard"),
+            AlgorithamOption::Enigma => String::from("Enigma"),
+            AlgorithamOption::XXTEA => String::from("XXTEA"),
+        }
+    }
+}
+
 fn settings_page(state: &State) -> Element<Message> {
+    let option = state.algoritham_option.lock().unwrap();
     column![
         text_input("Key", &state.key)
             .on_input(Message::KeyChanged)
@@ -923,8 +1006,8 @@ fn settings_page(state: &State) -> Element<Message> {
         row![
             text("Encryption/decryption algoritham: "),
             pick_list(
-                vec![String::from("Alg1"), String::from("Alg2")],
-                Some(state.algoritham.clone()),
+                vec![AlgorithamOption::Enigma, AlgorithamOption::XXTEA],
+                Some(option.clone()),
                 Message::AlgorithamChanged
             ),
         ]
@@ -941,7 +1024,7 @@ struct State {
     fsw: FSWState,
     manual: ManualState,
     tcp: TcpState,
-    algoritham: String,
+    algoritham_option: Arc<Mutex<AlgorithamOption>>,
     key: String,
 }
 
@@ -951,7 +1034,7 @@ struct FSWState {
     to: Option<PathBuf>,
     is_on: bool,
 
-    watcher: Option<Box<dyn Watcher>>,
+    watcher: Option<Box<dyn Watcher + Send>>,
 }
 
 #[derive(Default)]
@@ -1027,7 +1110,7 @@ pub enum Message {
     FSW(FSWPageMessage),
     Manual(ManualPageMessage),
     Tcp(TcpPageMessage),
-    AlgorithamChanged(String),
+    AlgorithamChanged(AlgorithamOption),
     KeyChanged(String),
 }
 
