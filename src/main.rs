@@ -8,7 +8,7 @@ use iced::{
     },
     Element, Length, Size, Task, Theme,
 };
-use notify::{recommended_watcher, RecursiveMode, Watcher};
+use notify::{recommended_watcher, Error, RecursiveMode, Watcher};
 use rfd::AsyncFileDialog;
 use std::{
     fmt::Display,
@@ -24,6 +24,67 @@ use tokio::{
     net::{TcpListener, TcpStream},
     task::JoinHandle,
 };
+
+#[derive(Default, Clone, Copy)]
+enum Operation {
+    #[default]
+    Encrypt,
+    Decrypt,
+}
+
+fn get_new_file_name(file: &PathBuf, op: Operation) -> String {
+    let file_stem = file.file_stem().unwrap();
+    let extension = file.extension().unwrap_or_default();
+
+    match op {
+        Operation::Encrypt => format!(
+            "{}_encrypted.{}",
+            file_stem.to_str().unwrap(),
+            extension.to_str().unwrap()
+        ),
+        Operation::Decrypt => format!(
+            "{}_decrypted.{}",
+            file_stem.to_str().unwrap(),
+            extension.to_str().unwrap()
+        ),
+    }
+}
+
+fn get_new_file_path(file: &PathBuf, dest_dir: &PathBuf, op: Operation) -> PathBuf {
+    let mut tmp = dest_dir.clone();
+    tmp.push(get_new_file_name(file, op));
+    tmp
+}
+
+async fn process_file(
+    file: &PathBuf,
+    alg: Box<dyn Algoritham + Send>,
+    op: Operation,
+    dest_dir: &PathBuf,
+) -> Result<(), Error> {
+    // let mut file_handle = tokio::fs::File::open(&file).await.unwrap();
+    let mut file_handle = tokio::fs::OpenOptions::new().read(true).open(&file).await?;
+
+    let file_content = {
+        let mut file_buffer = match file_handle.metadata().await {
+            Ok(metadata) => Vec::with_capacity(metadata.len().try_into().unwrap()),
+            Err(_) => Vec::new(),
+        };
+        file_handle.read_to_end(&mut file_buffer).await?;
+        file_buffer
+    };
+
+    let processed_file_content = match op {
+        Operation::Encrypt => alg.encrypt(&file_content),
+        Operation::Decrypt => alg.decrypt(&file_content),
+    };
+
+    let new_file_path = get_new_file_path(file, dest_dir, op);
+    let mut new_file = tokio::fs::File::create(new_file_path).await?;
+    new_file.write_all(&processed_file_content).await?;
+
+    Ok(())
+}
 
 #[tokio::main]
 async fn main() -> std::result::Result<(), iced::Error> {
@@ -167,95 +228,120 @@ impl State {
                     Task::none()
                 }
             },
-            Message::FSW(fsw_message) => {
-                match fsw_message {
-                    FSWPageMessage::GetDirToWatch => Task::perform(get_dir_path(), |path| {
-                        Message::FSW(FSWPageMessage::DirToWatchResult(path))
-                    }),
-                    FSWPageMessage::DirToWatchResult(path_buf) => {
-                        if let Some(path) = path_buf {
-                            self.fsw.from = Some(path);
-                        }
-                        Task::none()
+            Message::FSW(fsw_message) => match fsw_message {
+                FSWPageMessage::GetDirToWatch => Task::perform(get_dir_path(), |path| {
+                    Message::FSW(FSWPageMessage::DirToWatchResult(path))
+                }),
+                FSWPageMessage::DirToWatchResult(path_buf) => {
+                    if let Some(path) = path_buf {
+                        self.fsw.from = Some(path);
                     }
-                    FSWPageMessage::GetDirToSaveTo => Task::perform(get_dir_path(), |path| {
-                        Message::FSW(FSWPageMessage::DirToSaveToResult(path))
-                    }),
-                    FSWPageMessage::DirToSaveToResult(path_buf) => {
-                        if let Some(path) = path_buf {
-                            self.fsw.to = Some(path);
-                        }
-                        Task::none()
+                    Task::none()
+                }
+                FSWPageMessage::GetDirToSaveTo => Task::perform(get_dir_path(), |path| {
+                    Message::FSW(FSWPageMessage::DirToSaveToResult(path))
+                }),
+                FSWPageMessage::DirToSaveToResult(path_buf) => {
+                    if let Some(path) = path_buf {
+                        self.fsw.to = Some(path);
                     }
-                    FSWPageMessage::TurnOn => {
-                        let dir_to_watch = match &self.fsw.from {
-                            Some(path_buff) => path_buff.to_owned(),
-                            None => {
-                                println!("There is no selected directory to watch");
-                                return Task::none();
-                            }
-                        };
+                    Task::none()
+                }
+                FSWPageMessage::ToggleMode => {
+                    if let Operation::Encrypt = self.fsw.mode {
+                        self.fsw.mode = Operation::Decrypt
+                    } else {
+                        self.fsw.mode = Operation::Encrypt
+                    };
+                    Task::none()
+                }
+                FSWPageMessage::TurnOn => {
+                    let dir_to_watch = self
+                        .fsw
+                        .from
+                        .as_ref()
+                        .expect("This should not allow UI")
+                        .to_owned();
 
-                        let (event_tx, mut event_rx) = mpsc::channel(10);
+                    let dest_dir = self
+                        .fsw
+                        .to
+                        .as_ref()
+                        .expect("This should not allow UI")
+                        .to_owned();
 
-                        let mut watcher = recommended_watcher(move |res| {
+                    let algoritham_option = self.algoritham_option.clone();
+                    let operation = self.fsw.mode.to_owned();
+
+                    let (event_tx, mut event_rx) = mpsc::channel(10);
+
+                    let mut watcher = recommended_watcher(move |res| {
                             match res {
                                 Ok(event) => {
-                                    match event_tx.blocking_send(event){
-                                        Ok(_) => println!("Successfully sent."),
-                                        Err(_) => println!("Send error. A send operation can only fail if the receiving end of a channel is disconnected, implying that the data could never be received. The error contains the data being sent as a payload so it can be recovered."),
-                                    }
+                                    event_tx.blocking_send(event).expect("Send error. A send operation can only fail if the receiving end of a channel is disconnected, implying that the data could never be received. The error contains the data being sent as a payload so it can be recovered.")
                                 },
                                 Err(e) => println!("Event handler recieved error: {:?}", e),
                             }
                         }).expect("Couldn't create watcher");
 
-                        watcher
-                            .watch(&dir_to_watch, RecursiveMode::NonRecursive)
-                            .expect("Couldn't start watcher");
+                    watcher
+                        .watch(&dir_to_watch, RecursiveMode::NonRecursive)
+                        .expect("Couldn't start watcher");
 
-                        self.fsw.watcher = Some(Box::new(watcher));
+                    self.fsw.watcher = Some(Box::new(watcher));
 
-                        tokio::spawn(async move {
-                            while let Some(event) = event_rx.recv().await {
-                                println!("{:?}", event)
-                                // tokio::spawn(async move { process(event) });
+                    tokio::spawn(async move {
+                        while let Some(event) = event_rx.recv().await {
+                            if !matches!(event.kind, notify::EventKind::Create(_)) {
+                                continue;
                             }
-                            println!("Channel closed")
-                        });
 
-                        Task::done(Message::FSW(FSWPageMessage::WatchingStarted))
-                    }
-                    FSWPageMessage::TurnOff => {
-                        let dir_to_watch = match &self.fsw.from {
-                            Some(path_buff) => path_buff.to_owned(),
-                            None => {
-                                println!("There is no selected directory to watch");
-                                return Task::none();
-                            }
-                        };
+                            let file_path = event.paths.first().unwrap().to_owned();
 
-                        if let Some(w) = self.fsw.watcher.as_mut() {
-                            if w.unwatch(&dir_to_watch).is_ok() {
-                                self.fsw.watcher.take();
-                                println!("Unwatched");
-                            } else {
-                                println!("Couldn't unwatch");
-                            }
+                            println!("Created: {:?}", file_path);
+
+                            let alg = get_algoritham(&algoritham_option);
+
+                            let dest_dir = dest_dir.clone();
+                            tokio::spawn(async move {
+                                process_file(&file_path, alg, operation, &dest_dir)
+                                    .await
+                                    .unwrap();
+                            });
                         }
+                    });
 
-                        Task::done(Message::FSW(FSWPageMessage::WatchingEnded))
-                    }
-                    FSWPageMessage::WatchingStarted => {
-                        self.fsw.is_on = true;
-                        Task::none()
-                    }
-                    FSWPageMessage::WatchingEnded => {
-                        self.fsw.is_on = false;
-                        Task::none()
-                    }
+                    Task::done(Message::FSW(FSWPageMessage::WatchingStarted))
                 }
-            }
+                FSWPageMessage::TurnOff => {
+                    let dir_to_watch = match &self.fsw.from {
+                        Some(path_buff) => path_buff.to_owned(),
+                        None => {
+                            println!("There is no selected directory to watch");
+                            return Task::none();
+                        }
+                    };
+
+                    if let Some(w) = self.fsw.watcher.as_mut() {
+                        if w.unwatch(&dir_to_watch).is_ok() {
+                            self.fsw.watcher.take();
+                            println!("Unwatched");
+                        } else {
+                            println!("Couldn't unwatch");
+                        }
+                    }
+
+                    Task::done(Message::FSW(FSWPageMessage::WatchingEnded))
+                }
+                FSWPageMessage::WatchingStarted => {
+                    self.fsw.is_on = true;
+                    Task::none()
+                }
+                FSWPageMessage::WatchingEnded => {
+                    self.fsw.is_on = false;
+                    Task::none()
+                }
+            },
             Message::Manual(manual_message) => match manual_message {
                 ManualPageMessage::GetFile => Task::perform(get_file_path(), |path| {
                     Message::Manual(ManualPageMessage::FileResult(path))
@@ -759,6 +845,7 @@ impl State {
                 self.key = val;
                 Task::none()
             }
+            Message::Empty => Task::none(),
         }
     }
 }
@@ -796,7 +883,9 @@ fn fsw_page(state: &State) -> Element<Message> {
     column![
         text("Directory which the file watcher will monitor"),
         row![
-            text_input("Click the \"Choose\" button", &from).width(Length::Fill),
+            text_input("Click the \"Choose\" button", &from)
+                .width(Length::Fill)
+                .on_input(|_| Message::Empty),
             button(text("Choose").align_x(alignment::Horizontal::Center))
                 .width(Length::Shrink)
                 .on_press_maybe(if !state.fsw.is_on {
@@ -808,7 +897,9 @@ fn fsw_page(state: &State) -> Element<Message> {
         horizontal_space().height(10),
         text("Directory where the result will be saved"),
         row![
-            text_input("Click the \"Choose\" button", &to).width(Length::Fill),
+            text_input("Click the \"Choose\" button", &to)
+                .width(Length::Fill)
+                .on_input(|_| Message::Empty),
             button(text("Choose").align_x(alignment::Horizontal::Center))
                 .width(Length::Shrink)
                 .on_press_maybe(if !state.fsw.is_on {
@@ -817,7 +908,24 @@ fn fsw_page(state: &State) -> Element<Message> {
                     None
                 })
         ],
-        horizontal_space().height(10),
+        vertical_space().height(10),
+        container(row![
+            text("Decryption"),
+            horizontal_space().width(10),
+            toggler(matches!(state.fsw.mode, Operation::Encrypt))
+                .spacing(0)
+                .size(20)
+                .on_toggle_maybe(if state.fsw.is_on {
+                    None
+                } else {
+                    Some(|_| Message::FSW(FSWPageMessage::ToggleMode))
+                }),
+            horizontal_space().width(10),
+            text("Encryption"),
+        ])
+        .width(Length::Fill)
+        .align_x(alignment::Horizontal::Center),
+        vertical_space().height(10),
         container(
             button(
                 text(if state.fsw.is_on {
@@ -861,9 +969,11 @@ fn manual_page(state: &State) -> Element<Message> {
         .map(|path| path.clone().into_os_string().into_string().unwrap())
         .unwrap_or(String::from(""));
     column![
-        text("File to encrypt"),
+        text("File to process"),
         row![
-            text_input("Click the \"Choose\" button", &from).width(Length::Fill),
+            text_input("Click the \"Choose\" button", &from)
+                .width(Length::Fill)
+                .on_input(|_| Message::Empty),
             button(text("Choose").align_x(alignment::Horizontal::Center))
                 .width(Length::Shrink)
                 .on_press_maybe(if !state.manual.is_doing_work {
@@ -875,7 +985,9 @@ fn manual_page(state: &State) -> Element<Message> {
         horizontal_space().height(10),
         text("Directory where the result will be saved"),
         row![
-            text_input("Click the \"Choose\" button", &to).width(Length::Fill),
+            text_input("Click the \"Choose\" button", &to)
+                .width(Length::Fill)
+                .on_input(|_| Message::Empty),
             button(text("Choose").align_x(alignment::Horizontal::Center))
                 .width(Length::Shrink)
                 .on_press_maybe(if !state.manual.is_doing_work {
@@ -971,7 +1083,9 @@ fn tcp_send_widget(state: &State) -> Element<Message> {
     column![
         text("File to send"),
         row![
-            text_input("Click the \"Choose\" button", &file).width(Length::Fill),
+            text_input("Click the \"Choose\" button", &file)
+                .width(Length::Fill)
+                .on_input(|_| Message::Empty),
             button(text("Choose").align_x(alignment::Horizontal::Center))
                 .width(Length::Shrink)
                 .on_press_maybe(if !is_sending {
@@ -1040,7 +1154,9 @@ fn tcp_recieve_widget(state: &State) -> Element<Message> {
     column![
         text("Directory to save recieved files to"),
         row![
-            text_input("Click the \"Choose\" button", &to).width(Length::Fill),
+            text_input("Click the \"Choose\" button", &to)
+                .width(Length::Fill)
+                .on_input(|_| Message::Empty),
             button(text("Choose").align_x(alignment::Horizontal::Center))
                 .width(Length::Shrink)
                 .on_press_maybe(if !state.manual.is_doing_work {
@@ -1051,7 +1167,9 @@ fn tcp_recieve_widget(state: &State) -> Element<Message> {
         ],
         vertical_space().height(10),
         row![
-            text_input("localhost", "").width(Length::Fill),
+            text_input("127.0.0.1", "")
+                .width(Length::Fill)
+                .on_input(|_| Message::Empty),
             text(" : "),
             text_input("Port", &port)
                 .on_input_maybe(if !is_listening {
@@ -1145,13 +1263,38 @@ struct State {
     key: String,
 }
 
-#[derive(Default)]
+// #[derive(Default)]
 struct FSWState {
     from: Option<PathBuf>,
     to: Option<PathBuf>,
+    mode: Operation,
     is_on: bool,
 
     watcher: Option<Box<dyn Watcher + Send>>,
+}
+
+impl Default for FSWState {
+    fn default() -> Self {
+        let mut base = PathBuf::new();
+        base.push(r"C:\");
+        base.push("Users");
+        base.push("Aleksandar");
+        base.push("Documents");
+
+        let mut from = base.clone();
+        from.push("fsw_1source");
+
+        let mut to = base.clone();
+        to.push("fsw_2dest");
+
+        Self {
+            from: Some(from),
+            to: Some(to),
+            is_on: Default::default(),
+            watcher: Default::default(),
+            mode: Default::default(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -1229,6 +1372,7 @@ pub enum Message {
     Tcp(TcpPageMessage),
     AlgorithamChanged(AlgorithamOption),
     KeyChanged(String),
+    Empty,
 }
 
 #[derive(Debug, Clone)]
@@ -1245,6 +1389,7 @@ pub enum FSWPageMessage {
     DirToWatchResult(Option<PathBuf>),
     GetDirToSaveTo,
     DirToSaveToResult(Option<PathBuf>),
+    ToggleMode,
     TurnOn,
     TurnOff,
     WatchingStarted,
