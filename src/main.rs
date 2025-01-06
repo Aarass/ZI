@@ -11,6 +11,7 @@ use iced::{
 use notify::{recommended_watcher, RecursiveMode, Watcher};
 use rfd::AsyncFileDialog;
 use std::{
+    fmt::Display,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -32,6 +33,7 @@ async fn main() -> std::result::Result<(), iced::Error> {
         .centered()
         .run()
 }
+
 trait Algoritham {
     fn encrypt(&self, data: &[u8]) -> Vec<u8>;
     fn decrypt(&self, data: &[u8]) -> Vec<u8>;
@@ -48,6 +50,7 @@ impl Algoritham for Enigma {
     }
 }
 
+#[allow(clippy::upper_case_acronyms)]
 struct XXTEA {}
 impl Algoritham for XXTEA {
     fn encrypt(&self, data: &[u8]) -> Vec<u8> {
@@ -61,8 +64,8 @@ impl Algoritham for XXTEA {
 
 use magic_crypt::{new_magic_crypt, MagicCryptTrait};
 
-struct StdAlg {}
-impl Algoritham for StdAlg {
+struct Magic {}
+impl Algoritham for Magic {
     fn encrypt(&self, data: &[u8]) -> Vec<u8> {
         let mc = new_magic_crypt!("magickey", 256);
         mc.encrypt_bytes_to_bytes(data)
@@ -80,7 +83,7 @@ fn get_algoritham(alg: &Arc<Mutex<AlgorithamOption>>) -> Box<dyn Algoritham + Se
     match option {
         AlgorithamOption::Enigma => Box::new(Enigma {}),
         AlgorithamOption::XXTEA => Box::new(XXTEA {}),
-        AlgorithamOption::Std => Box::new(StdAlg {}),
+        AlgorithamOption::Magic => Box::new(Magic {}),
     }
 }
 
@@ -274,7 +277,58 @@ impl State {
                 }
                 ManualPageMessage::StartEncryption => {
                     self.manual.is_doing_work = true;
-                    Task::done(Message::Manual(ManualPageMessage::EncryptionDone))
+
+                    let algoritham_option = self.algoritham_option.clone();
+                    let file_path = self
+                        .manual
+                        .from
+                        .to_owned()
+                        .expect("UI shuold not allow this");
+
+                    let destination = self.manual.to.to_owned().expect("UI shuold not allow this");
+
+                    Task::perform(
+                        async move {
+                            let mut file = match tokio::fs::File::open(&file_path).await {
+                                Ok(s) => s,
+                                Err(err) => {
+                                    println!("Error opening the file in manual page: {:?}", err);
+                                    return;
+                                }
+                            };
+
+                            let mut file_buffer = if let Ok(metadata) = file.metadata().await {
+                                Vec::with_capacity(metadata.len().try_into().unwrap())
+                            } else {
+                                Vec::new()
+                            };
+
+                            file.read_to_end(&mut file_buffer)
+                                .await
+                                .expect("Error reading the file when trying to send it over tcp");
+
+                            let file_content = file_buffer;
+                            let alg = get_algoritham(&algoritham_option);
+                            let encrypted_file_content = alg.encrypt(&file_content);
+
+                            let file_stem = file_path.file_stem().unwrap();
+                            let extension = file_path.extension().unwrap_or_default();
+
+                            let new_file_stem =
+                                format!("{}_encrypted", file_stem.to_str().unwrap());
+
+                            let mut new_file_path = destination;
+                            new_file_path.push(format!(
+                                "{}.{}",
+                                new_file_stem,
+                                extension.to_str().unwrap()
+                            ));
+
+                            let mut file = tokio::fs::File::create(new_file_path).await.unwrap();
+                            file.write_all(&encrypted_file_content).await.unwrap();
+                        },
+                        |_| Message::Manual(ManualPageMessage::EncryptionDone),
+                    )
                 }
                 ManualPageMessage::EncryptionDone => {
                     self.manual.is_doing_work = false;
@@ -282,7 +336,60 @@ impl State {
                 }
                 ManualPageMessage::StartDecryption => {
                     self.manual.is_doing_work = true;
-                    Task::done(Message::Manual(ManualPageMessage::DecryptionDone))
+
+                    let file_path = self
+                        .manual
+                        .from
+                        .to_owned()
+                        .expect("UI shuold not allow this");
+
+                    let destination_dir =
+                        self.manual.to.to_owned().expect("UI shuold not allow this");
+
+                    let algoritham_option = self.algoritham_option.clone();
+
+                    Task::perform(
+                        async move {
+                            let mut file = match tokio::fs::File::open(&file_path).await {
+                                Ok(s) => s,
+                                Err(err) => {
+                                    println!("Error opening the file in manual page: {:?}", err);
+                                    return;
+                                }
+                            };
+
+                            let mut file_buffer = if let Ok(metadata) = file.metadata().await {
+                                Vec::with_capacity(metadata.len().try_into().unwrap())
+                            } else {
+                                Vec::new()
+                            };
+                            file.read_to_end(&mut file_buffer)
+                                .await
+                                .expect("Error reading the file when trying to send it over tcp");
+
+                            let file_content = file_buffer;
+
+                            let alg = get_algoritham(&algoritham_option);
+                            let decrypted_file_content = alg.decrypt(&file_content);
+
+                            let file_stem = file_path.file_stem().unwrap();
+                            let extension = file_path.extension().unwrap_or_default();
+
+                            let new_file_stem =
+                                format!("{}_decrypted", file_stem.to_str().unwrap());
+
+                            let mut new_file_path = destination_dir;
+                            new_file_path.push(format!(
+                                "{}.{}",
+                                new_file_stem,
+                                extension.to_str().unwrap()
+                            ));
+
+                            let mut file = tokio::fs::File::create(new_file_path).await.unwrap();
+                            file.write_all(&decrypted_file_content).await.unwrap();
+                        },
+                        |_| Message::Manual(ManualPageMessage::DecryptionDone),
+                    )
                 }
                 ManualPageMessage::DecryptionDone => {
                     self.manual.is_doing_work = false;
@@ -506,12 +613,14 @@ impl State {
                                                 "Error sending file contents over tcp connection: {:?}",
                                                 err
                                             );
+                                            #[allow(clippy::needless_return)]
                                             return;
                                         }
                                     };
                                 }
                                 Err(err) => {
                                     println!("Error opening connection to the server {:?}", err);
+                                    #[allow(clippy::needless_return)]
                                     return;
                                 }
                             };
@@ -981,18 +1090,22 @@ fn tcp_recieve_widget(state: &State) -> Element<Message> {
 #[derive(Clone, PartialEq, Default, Debug)]
 pub enum AlgorithamOption {
     #[default]
-    Std,
+    Magic,
     Enigma,
     XXTEA,
 }
 
-impl ToString for AlgorithamOption {
-    fn to_string(&self) -> String {
-        match self {
-            AlgorithamOption::Std => String::from("Standard"),
-            AlgorithamOption::Enigma => String::from("Enigma"),
-            AlgorithamOption::XXTEA => String::from("XXTEA"),
-        }
+impl Display for AlgorithamOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                AlgorithamOption::Magic => "Magic",
+                AlgorithamOption::Enigma => "Enigma",
+                AlgorithamOption::XXTEA => "XXTEA",
+            }
+        )
     }
 }
 
@@ -1006,7 +1119,11 @@ fn settings_page(state: &State) -> Element<Message> {
         row![
             text("Encryption/decryption algoritham: "),
             pick_list(
-                vec![AlgorithamOption::Enigma, AlgorithamOption::XXTEA],
+                vec![
+                    AlgorithamOption::Magic,
+                    AlgorithamOption::Enigma,
+                    AlgorithamOption::XXTEA
+                ],
                 Some(option.clone()),
                 Message::AlgorithamChanged
             ),
