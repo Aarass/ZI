@@ -62,7 +62,6 @@ async fn process_file(
     op: Operation,
     dest_dir: &PathBuf,
 ) -> Result<(), Error> {
-    // let mut file_handle = tokio::fs::File::open(&file).await.unwrap();
     let mut file_handle = tokio::fs::OpenOptions::new().read(true).open(&file).await?;
 
     let file_content = {
@@ -88,8 +87,14 @@ async fn process_file(
 
 #[tokio::main]
 async fn main() -> std::result::Result<(), iced::Error> {
+    let image_data = include_bytes!("../assets/icon.png");
+
+    let mut window_settings = iced::window::Settings::default();
+    window_settings.icon = iced::window::icon::from_file_data(image_data, None).ok();
+
     iced::application("ZI", State::update, State::view)
         .theme(|_| iced::Theme::Dark)
+        .window(window_settings)
         .window_size(Size::new(600.0, 400.0))
         .centered()
         .run()
