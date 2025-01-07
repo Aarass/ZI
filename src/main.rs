@@ -369,54 +369,21 @@ impl State {
                 ManualPageMessage::StartEncryption => {
                     self.manual.is_doing_work = true;
 
-                    let algoritham_option = self.algoritham_option.clone();
+                    let alg = get_algoritham(&self.algoritham_option);
+
                     let file_path = self
                         .manual
                         .from
                         .to_owned()
-                        .expect("UI shuold not allow this");
+                        .expect("UI should not allow this");
 
-                    let destination = self.manual.to.to_owned().expect("UI shuold not allow this");
+                    let dest_dir = self.manual.to.to_owned().expect("UI should not allow this");
 
                     Task::perform(
                         async move {
-                            let mut file = match tokio::fs::File::open(&file_path).await {
-                                Ok(s) => s,
-                                Err(err) => {
-                                    println!("Error opening the file in manual page: {:?}", err);
-                                    return;
-                                }
-                            };
-
-                            let mut file_buffer = if let Ok(metadata) = file.metadata().await {
-                                Vec::with_capacity(metadata.len().try_into().unwrap())
-                            } else {
-                                Vec::new()
-                            };
-
-                            file.read_to_end(&mut file_buffer)
+                            process_file(&file_path, alg, Operation::Encrypt, &dest_dir)
                                 .await
-                                .expect("Error reading the file when trying to send it over tcp");
-
-                            let file_content = file_buffer;
-                            let alg = get_algoritham(&algoritham_option);
-                            let encrypted_file_content = alg.encrypt(&file_content);
-
-                            let file_stem = file_path.file_stem().unwrap();
-                            let extension = file_path.extension().unwrap_or_default();
-
-                            let new_file_stem =
-                                format!("{}_encrypted", file_stem.to_str().unwrap());
-
-                            let mut new_file_path = destination;
-                            new_file_path.push(format!(
-                                "{}.{}",
-                                new_file_stem,
-                                extension.to_str().unwrap()
-                            ));
-
-                            let mut file = tokio::fs::File::create(new_file_path).await.unwrap();
-                            file.write_all(&encrypted_file_content).await.unwrap();
+                                .unwrap();
                         },
                         |_| Message::Manual(ManualPageMessage::EncryptionDone),
                     )
@@ -428,56 +395,21 @@ impl State {
                 ManualPageMessage::StartDecryption => {
                     self.manual.is_doing_work = true;
 
+                    let alg = get_algoritham(&self.algoritham_option);
+
                     let file_path = self
                         .manual
                         .from
                         .to_owned()
-                        .expect("UI shuold not allow this");
+                        .expect("UI should not allow this");
 
-                    let destination_dir =
-                        self.manual.to.to_owned().expect("UI shuold not allow this");
-
-                    let algoritham_option = self.algoritham_option.clone();
+                    let dest_dir = self.manual.to.to_owned().expect("UI should not allow this");
 
                     Task::perform(
                         async move {
-                            let mut file = match tokio::fs::File::open(&file_path).await {
-                                Ok(s) => s,
-                                Err(err) => {
-                                    println!("Error opening the file in manual page: {:?}", err);
-                                    return;
-                                }
-                            };
-
-                            let mut file_buffer = if let Ok(metadata) = file.metadata().await {
-                                Vec::with_capacity(metadata.len().try_into().unwrap())
-                            } else {
-                                Vec::new()
-                            };
-                            file.read_to_end(&mut file_buffer)
+                            process_file(&file_path, alg, Operation::Decrypt, &dest_dir)
                                 .await
-                                .expect("Error reading the file when trying to send it over tcp");
-
-                            let file_content = file_buffer;
-
-                            let alg = get_algoritham(&algoritham_option);
-                            let decrypted_file_content = alg.decrypt(&file_content);
-
-                            let file_stem = file_path.file_stem().unwrap();
-                            let extension = file_path.extension().unwrap_or_default();
-
-                            let new_file_stem =
-                                format!("{}_decrypted", file_stem.to_str().unwrap());
-
-                            let mut new_file_path = destination_dir;
-                            new_file_path.push(format!(
-                                "{}.{}",
-                                new_file_stem,
-                                extension.to_str().unwrap()
-                            ));
-
-                            let mut file = tokio::fs::File::create(new_file_path).await.unwrap();
-                            file.write_all(&decrypted_file_content).await.unwrap();
+                                .unwrap();
                         },
                         |_| Message::Manual(ManualPageMessage::DecryptionDone),
                     )
@@ -597,13 +529,18 @@ impl State {
                                 }
                             };
 
+                            println!("Send about to lock alg");
                             let alg = get_algoritham(&algoritham_option);
                             let encrypted_file_content = alg.encrypt(&file_content);
 
                             let hash = hash::hash_file(&encrypted_file_content);
 
-                            match TcpStream::connect(address).await {
+                            println!("Send about to connect");
+                            let tmp = TcpStream::connect(address).await;
+                            println!("Send connected");
+                            match tmp {
                                 Ok(mut stream) => {
+                                    println!("Successfully connected to server");
                                     match stream.write_all(file_name_prefix).await {
                                         Ok(_) => {
                                             println!("Successfully sent file name length-prefix")
@@ -749,6 +686,17 @@ impl State {
                     let algoritham_option = self.algoritham_option.clone();
 
                     let handle = tokio::spawn(async move {
+                        // let listener =
+                        //     std::net::TcpListener::bind(format!("127.0.0.1:{:?}", my_port))
+                        //         .unwrap();
+                        // let (mut socket, addr) = listener.accept().unwrap();
+
+                        // let file_name_len = leb128::read::unsigned(&mut socket).unwrap();
+
+                        // println!("{:?}", file_name_len);
+
+                        // return;
+
                         let listener =
                             match TcpListener::bind(format!("127.0.0.1:{:?}", my_port)).await {
                                 Ok(listener) => {
@@ -775,18 +723,25 @@ impl State {
                             let algoritham_option = algoritham_option.clone();
 
                             tokio::spawn(async move {
+                                println!("Obradjivanje pocinje");
+
                                 // Dont look here
                                 // -----------------------------------------
-                                let mut socket = socket.into_std().unwrap();
-                                socket.set_nonblocking(false).unwrap();
+                                let (file_name_len, mut socket) = {
+                                    let mut socket = socket.into_std().unwrap();
+                                    socket.set_nonblocking(false).unwrap();
 
-                                let file_name_len = leb128::read::unsigned(&mut socket).unwrap();
+                                    let file_name_len =
+                                        leb128::read::unsigned(&mut socket).unwrap();
+
+                                    (
+                                        file_name_len,
+                                        tokio::net::TcpStream::from_std(socket).unwrap(),
+                                    )
+                                };
+                                // ---------------------------------------------------
 
                                 println!("Length-prefix: {:?}", file_name_len);
-
-                                socket.set_nonblocking(false).unwrap();
-                                let mut socket = TcpStream::from_std(socket).unwrap();
-                                // ---------------------------------------------------
 
                                 let mut file_name_buf =
                                     vec![0u8; file_name_len.try_into().unwrap()];
@@ -810,11 +765,14 @@ impl State {
                                 let mut encrypted_content = Vec::new();
                                 socket.read_to_end(&mut encrypted_content).await.unwrap();
 
+                                socket.shutdown().await.unwrap();
+
                                 println!(
                                     "Recived encrypted data: {:?}",
                                     String::from_utf8_lossy(&encrypted_content)
                                 );
 
+                                println!("Recieve about to lock alg");
                                 let alg = get_algoritham(&algoritham_option);
                                 let decrypted_file_content = alg.decrypt(&encrypted_content);
                                 println!(
