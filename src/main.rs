@@ -3,8 +3,8 @@ mod hash;
 use iced::{
     alignment,
     widget::{
-        button, column, container, horizontal_space, pick_list, row, text, text_input, toggler,
-        vertical_space, Column, Row,
+        button, column, container, horizontal_space, pick_list, row, svg, text, text_input,
+        toggler, vertical_space, Column, Row,
     },
     Element, Length, Size, Task, Theme,
 };
@@ -17,7 +17,7 @@ use std::{
 };
 
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     sync::mpsc,
 };
 use tokio::{
@@ -87,10 +87,10 @@ async fn process_file(
 
 #[tokio::main]
 async fn main() -> std::result::Result<(), iced::Error> {
-    let image_data = include_bytes!("../assets/icon.png");
+    let icon_data = include_bytes!("../assets/icon.png");
 
     let mut window_settings = iced::window::Settings::default();
-    window_settings.icon = iced::window::icon::from_file_data(image_data, None).ok();
+    window_settings.icon = iced::window::icon::from_file_data(icon_data, None).ok();
 
     iced::application("ZI", State::update, State::view)
         .theme(|_| iced::Theme::Dark)
@@ -186,16 +186,21 @@ impl State {
                         button::secondary(theme, status)
                     }
                 }),
-            button(text("Settings").align_x(alignment::Horizontal::Center))
-                .width(Length::Fill)
-                .on_press(Message::Navigation(NavigationMessage::GoToSettingsPage))
-                .style(|theme: &Theme, status| {
-                    if let Page::Settings = self.page {
-                        button::primary(theme, status)
-                    } else {
-                        button::secondary(theme, status)
-                    }
-                }),
+            button(row![
+                text(""),
+                svg(svg::Handle::from_path(PathBuf::from("./assets/gear.svg")))
+                    .width(20)
+                    .height(20)
+            ])
+            .width(Length::Shrink)
+            .on_press(Message::Navigation(NavigationMessage::GoToSettingsPage))
+            .style(|theme: &Theme, status| {
+                if let Page::Settings = self.page {
+                    button::primary(theme, status)
+                } else {
+                    button::secondary(theme, status)
+                }
+            }),
         ];
 
         let page: Element<Message> = match self.page {
@@ -725,21 +730,15 @@ impl State {
                             tokio::spawn(async move {
                                 println!("Obradjivanje pocinje");
 
-                                // Dont look here
-                                // -----------------------------------------
-                                let (file_name_len, mut socket) = {
-                                    let mut socket = socket.into_std().unwrap();
-                                    socket.set_nonblocking(false).unwrap();
+                                let mut socket = BufReader::new(socket);
 
-                                    let file_name_len =
-                                        leb128::read::unsigned(&mut socket).unwrap();
+                                socket.fill_buf().await.unwrap();
 
-                                    (
-                                        file_name_len,
-                                        tokio::net::TcpStream::from_std(socket).unwrap(),
-                                    )
-                                };
-                                // ---------------------------------------------------
+                                let mut buf = socket.buffer();
+                                let file_name_len = leb128::read::unsigned(&mut buf).unwrap();
+
+                                let bytes_to_consume = socket.buffer().len() - buf.len();
+                                socket.consume(bytes_to_consume);
 
                                 println!("Length-prefix: {:?}", file_name_len);
 
@@ -1226,7 +1225,6 @@ struct State {
     key: String,
 }
 
-// #[derive(Default)]
 struct FSWState {
     from: Option<PathBuf>,
     to: Option<PathBuf>,
