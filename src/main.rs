@@ -3,17 +3,17 @@ mod hash;
 use iced::{
     alignment,
     widget::{
-        button, column, container, horizontal_space, pick_list, row, svg, text, text_input,
-        toggler, vertical_space, Column, Row,
+        button, column, container, horizontal_space, opaque, pick_list, row, stack, svg, text,
+        text_input, toggler, vertical_space, Column, Row,
     },
-    Element, Length, Size, Task, Theme,
+    Alignment, Background, Border, Color, Element, Length, Shadow, Size, Task, Theme,
 };
 use notify::{recommended_watcher, Error, RecursiveMode, Watcher};
 use rfd::AsyncFileDialog;
 use std::{
     fmt::Display,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
 };
 
 use tokio::{
@@ -60,6 +60,7 @@ async fn process_file(
     file: &PathBuf,
     alg: Box<dyn Algoritham + Send>,
     op: Operation,
+    key: String,
     dest_dir: &PathBuf,
 ) -> Result<(), Error> {
     let mut file_handle = tokio::fs::OpenOptions::new().read(true).open(&file).await?;
@@ -74,8 +75,8 @@ async fn process_file(
     };
 
     let processed_file_content = match op {
-        Operation::Encrypt => alg.encrypt(&file_content),
-        Operation::Decrypt => alg.decrypt(&file_content),
+        Operation::Encrypt => alg.encrypt(&file_content, key),
+        Operation::Decrypt => alg.decrypt(&file_content, key),
     };
 
     let new_file_path = get_new_file_path(file, dest_dir, op);
@@ -101,17 +102,19 @@ async fn main() -> std::result::Result<(), iced::Error> {
 }
 
 trait Algoritham {
-    fn encrypt(&self, data: &[u8]) -> Vec<u8>;
-    fn decrypt(&self, data: &[u8]) -> Vec<u8>;
+    fn encrypt(&self, data: &[u8], key: String) -> Vec<u8>;
+    fn decrypt(&self, data: &[u8], key: String) -> Vec<u8>;
 }
 
 struct Enigma {}
 impl Algoritham for Enigma {
-    fn encrypt(&self, data: &[u8]) -> Vec<u8> {
+    fn encrypt(&self, data: &[u8], key: String) -> Vec<u8> {
+        let _ = key;
         data.to_owned()
     }
 
-    fn decrypt(&self, data: &[u8]) -> Vec<u8> {
+    fn decrypt(&self, data: &[u8], key: String) -> Vec<u8> {
+        let _ = key;
         data.to_owned()
     }
 }
@@ -119,11 +122,13 @@ impl Algoritham for Enigma {
 #[allow(clippy::upper_case_acronyms)]
 struct XXTEA {}
 impl Algoritham for XXTEA {
-    fn encrypt(&self, data: &[u8]) -> Vec<u8> {
+    fn encrypt(&self, data: &[u8], key: String) -> Vec<u8> {
+        let _ = key;
         data.to_owned()
     }
 
-    fn decrypt(&self, data: &[u8]) -> Vec<u8> {
+    fn decrypt(&self, data: &[u8], key: String) -> Vec<u8> {
+        let _ = key;
         data.to_owned()
     }
 }
@@ -132,20 +137,19 @@ use magic_crypt::{new_magic_crypt, MagicCryptTrait};
 
 struct Magic {}
 impl Algoritham for Magic {
-    fn encrypt(&self, data: &[u8]) -> Vec<u8> {
-        let mc = new_magic_crypt!("magickey", 256);
+    fn encrypt(&self, data: &[u8], key: String) -> Vec<u8> {
+        let mc = new_magic_crypt!(&key, 256);
         mc.encrypt_bytes_to_bytes(data)
     }
 
-    fn decrypt(&self, data: &[u8]) -> Vec<u8> {
-        let mc = new_magic_crypt!("magickey", 256);
+    fn decrypt(&self, data: &[u8], key: String) -> Vec<u8> {
+        let mc = new_magic_crypt!(&key, 256);
         mc.decrypt_bytes_to_bytes(data).unwrap()
     }
 }
 
 fn get_algoritham(alg: &Arc<Mutex<AlgorithamOption>>) -> Box<dyn Algoritham + Send> {
     let option = alg.lock().unwrap().to_owned();
-    println!("Choosed: {:?}", option);
     match option {
         AlgorithamOption::Enigma => Box::new(Enigma {}),
         AlgorithamOption::XXTEA => Box::new(XXTEA {}),
@@ -154,7 +158,7 @@ fn get_algoritham(alg: &Arc<Mutex<AlgorithamOption>>) -> Box<dyn Algoritham + Se
 }
 
 impl State {
-    pub fn view(&self) -> Column<Message> {
+    pub fn view(&self) -> Element<Message> {
         let navigation: Row<Message> = row![
             button(text("FS Watcher").align_x(alignment::Horizontal::Center))
                 .width(Length::Fill)
@@ -210,12 +214,24 @@ impl State {
             Page::Settings => settings_page(self),
         };
 
-        column![
+        let toasts_overlay = container(row![
+            horizontal_space().width(Length::FillPortion(1)),
+            container(toasts(self)).width(Length::FillPortion(2))
+        ])
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(Alignment::End)
+        .align_y(Alignment::End)
+        .padding(20);
+
+        let main_view = column![
             navigation,
             container(page)
                 .center_x(Length::Fill)
                 .center_y(Length::Fill),
-        ]
+        ];
+
+        stack![main_view, toasts_overlay].into()
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -281,6 +297,7 @@ impl State {
                         .to_owned();
 
                     let algoritham_option = self.algoritham_option.clone();
+                    let key = self.key.clone();
                     let operation = self.fsw.mode.to_owned();
 
                     let (event_tx, mut event_rx) = mpsc::channel(10);
@@ -311,10 +328,11 @@ impl State {
                             println!("Created: {:?}", file_path);
 
                             let alg = get_algoritham(&algoritham_option);
+                            let key = key.lock().unwrap().to_owned();
 
                             let dest_dir = dest_dir.clone();
                             tokio::spawn(async move {
-                                process_file(&file_path, alg, operation, &dest_dir)
+                                process_file(&file_path, alg, operation, key, &dest_dir)
                                     .await
                                     .unwrap();
                             });
@@ -375,6 +393,7 @@ impl State {
                     self.manual.is_doing_work = true;
 
                     let alg = get_algoritham(&self.algoritham_option);
+                    let key = self.key.lock().unwrap().to_owned();
 
                     let file_path = self
                         .manual
@@ -386,7 +405,7 @@ impl State {
 
                     Task::perform(
                         async move {
-                            process_file(&file_path, alg, Operation::Encrypt, &dest_dir)
+                            process_file(&file_path, alg, Operation::Encrypt, key, &dest_dir)
                                 .await
                                 .unwrap();
                         },
@@ -401,6 +420,7 @@ impl State {
                     self.manual.is_doing_work = true;
 
                     let alg = get_algoritham(&self.algoritham_option);
+                    let key = self.key.lock().unwrap().to_owned();
 
                     let file_path = self
                         .manual
@@ -409,10 +429,9 @@ impl State {
                         .expect("UI should not allow this");
 
                     let dest_dir = self.manual.to.to_owned().expect("UI should not allow this");
-
                     Task::perform(
                         async move {
-                            process_file(&file_path, alg, Operation::Decrypt, &dest_dir)
+                            process_file(&file_path, alg, Operation::Decrypt, key, &dest_dir)
                                 .await
                                 .unwrap();
                         },
@@ -492,6 +511,7 @@ impl State {
                         .to_string();
 
                     let algoritham_option = self.algoritham_option.clone();
+                    let key = self.key.clone();
 
                     Task::perform(
                         async move {
@@ -536,7 +556,9 @@ impl State {
 
                             println!("Send about to lock alg");
                             let alg = get_algoritham(&algoritham_option);
-                            let encrypted_file_content = alg.encrypt(&file_content);
+                            let key = key.lock().unwrap().to_owned();
+
+                            let encrypted_file_content = alg.encrypt(&file_content, key);
 
                             let hash = hash::hash_file(&encrypted_file_content);
 
@@ -689,19 +711,9 @@ impl State {
                         .expect("My port is none when trying to start tcp server");
 
                     let algoritham_option = self.algoritham_option.clone();
+                    let key = self.key.clone();
 
                     let handle = tokio::spawn(async move {
-                        // let listener =
-                        //     std::net::TcpListener::bind(format!("127.0.0.1:{:?}", my_port))
-                        //         .unwrap();
-                        // let (mut socket, addr) = listener.accept().unwrap();
-
-                        // let file_name_len = leb128::read::unsigned(&mut socket).unwrap();
-
-                        // println!("{:?}", file_name_len);
-
-                        // return;
-
                         let listener =
                             match TcpListener::bind(format!("127.0.0.1:{:?}", my_port)).await {
                                 Ok(listener) => {
@@ -726,19 +738,21 @@ impl State {
                             println!("Accepted connection: {:?}", addr);
 
                             let algoritham_option = algoritham_option.clone();
+                            let key = key.clone();
 
                             tokio::spawn(async move {
-                                println!("Obradjivanje pocinje");
-
                                 let mut socket = BufReader::new(socket);
-
                                 socket.fill_buf().await.unwrap();
 
-                                let mut buf = socket.buffer();
-                                let file_name_len = leb128::read::unsigned(&mut buf).unwrap();
+                                let file_name_len = {
+                                    let mut buf = socket.buffer();
+                                    let file_name_len = leb128::read::unsigned(&mut buf).unwrap();
 
-                                let bytes_to_consume = socket.buffer().len() - buf.len();
-                                socket.consume(bytes_to_consume);
+                                    let bytes_to_consume = socket.buffer().len() - buf.len();
+                                    socket.consume(bytes_to_consume);
+
+                                    file_name_len
+                                };
 
                                 println!("Length-prefix: {:?}", file_name_len);
 
@@ -771,9 +785,10 @@ impl State {
                                     String::from_utf8_lossy(&encrypted_content)
                                 );
 
-                                println!("Recieve about to lock alg");
                                 let alg = get_algoritham(&algoritham_option);
-                                let decrypted_file_content = alg.decrypt(&encrypted_content);
+                                let key = key.lock().unwrap().to_owned();
+
+                                let decrypted_file_content = alg.decrypt(&encrypted_content, key);
                                 println!(
                                     "Decrypted data: {:?}",
                                     String::from_utf8_lossy(&decrypted_file_content)
@@ -799,15 +814,49 @@ impl State {
                     Task::none()
                 }
             },
-            Message::AlgorithamChanged(val) => {
-                *self.algoritham_option.lock().unwrap() = val;
+            Message::AlgorithamChanged(new_option) => {
+                match self.algoritham_option.lock() {
+                    Ok(mut option) => {
+                        *option = new_option;
+                    }
+                    Err(err) => {
+                        println!("{:?}", err);
+                    }
+                };
                 Task::none()
             }
-            Message::KeyChanged(val) => {
-                self.key = val;
+            Message::KeyChanged(new_key) => {
+                match self.key.lock() {
+                    Ok(mut key) => {
+                        *key = new_key;
+                    }
+                    Err(err) => {
+                        println!("{:?}", err);
+                    }
+                };
                 Task::none()
             }
-            Message::Empty => Task::none(),
+            Message::DeleteToast(id) => {
+                let index = self
+                    .toasts
+                    .iter()
+                    .position(|val| val.id == id)
+                    .expect("Bug!!! Expect a valid id to be passed");
+
+                self.toasts.remove(index);
+
+                Task::none()
+            }
+            Message::Empty => {
+                match self.errors.try_write() {
+                    Ok(mut guard) => {
+                        guard.push(String::from("New error"));
+                    }
+                    Err(err) => println!("err, {:?}", err),
+                }
+                //
+                Task::none()
+            }
         }
     }
 }
@@ -1121,7 +1170,7 @@ fn tcp_recieve_widget(state: &State) -> Element<Message> {
                 .on_input(|_| Message::Empty),
             button(text("Choose").align_x(alignment::Horizontal::Center))
                 .width(Length::Shrink)
-                .on_press_maybe(if !state.manual.is_doing_work {
+                .on_press_maybe(if !state.tcp.is_listening {
                     Some(Message::Tcp(TcpPageMessage::SelectDirToStoreFiles))
                 } else {
                     None
@@ -1129,9 +1178,7 @@ fn tcp_recieve_widget(state: &State) -> Element<Message> {
         ],
         vertical_space().height(10),
         row![
-            text_input("127.0.0.1", "")
-                .width(Length::Fill)
-                .on_input(|_| Message::Empty),
+            text_input("127.0.0.1", "").width(Length::Fill),
             text(" : "),
             text_input("Port", &port)
                 .on_input_maybe(if !is_listening {
@@ -1190,9 +1237,20 @@ impl Display for AlgorithamOption {
 }
 
 fn settings_page(state: &State) -> Element<Message> {
-    let option = state.algoritham_option.lock().unwrap();
+    let key = state
+        .key
+        .lock()
+        .map(|guard| guard.to_owned())
+        .unwrap_or(String::from("Error"));
+
+    let option = state
+        .algoritham_option
+        .lock()
+        .map(|guard| guard.to_owned())
+        .unwrap_or_default();
+
     column![
-        text_input("Key", &state.key)
+        text_input("Key", &key)
             .on_input(Message::KeyChanged)
             .width(Length::Fill),
         vertical_space().height(10),
@@ -1215,14 +1273,115 @@ fn settings_page(state: &State) -> Element<Message> {
     .into()
 }
 
-#[derive(Default)]
+fn toasts(state: &State) -> Element<Message> {
+    let toasts = state
+        .toasts
+        .iter()
+        .map(|toast| column![vertical_space().height(10), toast_widget(&toast)].into());
+
+    Column::new().width(Length::Fill).extend(toasts).into()
+}
+
+fn toast_widget(toast: &Toast) -> Element<Message> {
+    let severity = toast.severity.clone();
+
+    opaque(
+        container(row![
+            container(text(&toast.message)).width(Length::Fill),
+            horizontal_space().width(10),
+            button(
+                svg(svg::Handle::from_path(PathBuf::from("./assets/close.svg")))
+                    .width(20)
+                    .height(20)
+            )
+            .style(|_, _| {
+                button::Style {
+                    background: None,
+                    text_color: Color::BLACK,
+                    border: Border::default().rounded(500),
+                    shadow: Shadow::default(),
+                }
+            })
+            .padding(0)
+            .width(20)
+            .height(20)
+            .on_press(Message::DeleteToast(toast.id))
+        ])
+        .width(Length::Fill)
+        .padding([10, 10])
+        .style(move |theme: &Theme| get_toast_style(theme, severity)),
+    )
+    .into()
+}
+
+fn get_toast_style(theme: &Theme, severity: Severity) -> container::Style {
+    let color = match severity {
+        Severity::Success => theme.palette().success,
+        Severity::Error => theme.palette().danger,
+        Severity::Info => theme.palette().primary,
+    };
+
+    container::Style::default()
+        .background(Background::Color(color))
+        .border(Border::default().rounded(10.0))
+}
+
+struct Toast {
+    id: u32,
+    message: String,
+    severity: Severity,
+}
+
+#[derive(Clone, Copy)]
+enum Severity {
+    Success,
+    Error,
+    Info,
+}
+
+// #[derive(Default)]
 struct State {
     page: Page,
     fsw: FSWState,
     manual: ManualState,
     tcp: TcpState,
     algoritham_option: Arc<Mutex<AlgorithamOption>>,
-    key: String,
+    key: Arc<Mutex<String>>,
+
+    errors: Arc<RwLock<Vec<String>>>,
+
+    toasts: Vec<Toast>,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            page: Default::default(),
+            fsw: Default::default(),
+            manual: Default::default(),
+            tcp: Default::default(),
+            algoritham_option: Default::default(),
+            key: Default::default(),
+            errors: Default::default(),
+            toasts: vec![
+                Toast {
+                    id: 1,
+                    message: "Error: Failed to establish TCP connection to 192.168.1.10 on port 8080. Handshake timeout after 30 seconds. The server might be down, unreachable, or blocking the connection. Please check network settings. ".to_owned(),
+                    severity: Severity::Error,
+                },
+                Toast {
+                    id: 2,
+                    message: "About to start encryption.".to_owned(),
+                    severity: Severity::Info,
+                },
+                Toast {
+                    id: 3,
+                    message: "File succesfully sent.".to_owned(),
+                    severity: Severity::Success,
+                }
+            ]
+        }
+    }
 }
 
 struct FSWState {
@@ -1333,6 +1492,7 @@ pub enum Message {
     Tcp(TcpPageMessage),
     AlgorithamChanged(AlgorithamOption),
     KeyChanged(String),
+    DeleteToast(u32),
     Empty,
 }
 
