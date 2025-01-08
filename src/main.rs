@@ -3,8 +3,8 @@ mod hash;
 use iced::{
     alignment,
     widget::{
-        button, column, container, horizontal_space, opaque, pick_list, row, stack, svg, text,
-        text_input, toggler, vertical_space, Column, Row,
+        button, column, container, horizontal_rule, horizontal_space, opaque, pick_list, row,
+        scrollable, stack, svg, text, text_input, toggler, vertical_space, Column, Row,
     },
     Alignment, Background, Border, Color, Element, Length, Shadow, Size, Task, Theme,
 };
@@ -94,7 +94,9 @@ async fn main() -> std::result::Result<(), iced::Error> {
     window_settings.icon = iced::window::icon::from_file_data(icon_data, None).ok();
 
     iced::application("ZI", State::update, State::view)
-        .theme(|_| iced::Theme::Dark)
+        // .theme(|_| iced::Theme::SolarizedDark)
+        .theme(|_| iced::Theme::TokyoNightStorm)
+        // .theme(|_| iced::Theme::Nord)
         .window(window_settings)
         .window_size(Size::new(600.0, 400.0))
         .centered()
@@ -159,37 +161,70 @@ fn get_algoritham(alg: &Arc<Mutex<AlgorithamOption>>) -> Box<dyn Algoritham + Se
 
 impl State {
     pub fn view(&self) -> Element<Message> {
+        let tab_radius = 20.0;
         let navigation: Row<Message> = row![
+            horizontal_space().width(10),
             button(text("FS Watcher").align_x(alignment::Horizontal::Center))
-                .width(Length::Fill)
+                // .width(Length::Fill)
+                .width(150)
                 .on_press(Message::Navigation(NavigationMessage::GoToFSWPage))
-                .style(|theme: &Theme, status| {
-                    if let Page::Fsw = self.page {
+                .style(move |theme: &Theme, status| {
+                    let mut style = if let Page::Fsw = self.page {
                         button::primary(theme, status)
                     } else {
                         button::secondary(theme, status)
-                    }
+                    };
+
+                    style.border.radius = iced::border::Radius {
+                        top_left: tab_radius,
+                        top_right: tab_radius,
+                        bottom_right: 0.0,
+                        bottom_left: 0.0,
+                    };
+
+                    style
                 }),
             button(text("Manual").align_x(alignment::Horizontal::Center))
-                .width(Length::Fill)
+                // .width(Length::Fill)
+                .width(150)
                 .on_press(Message::Navigation(NavigationMessage::GoToManualPage))
-                .style(|theme: &Theme, status| {
-                    if let Page::Manual = self.page {
+                .style(move |theme: &Theme, status| {
+                    let mut style = if let Page::Manual = self.page {
                         button::primary(theme, status)
                     } else {
                         button::secondary(theme, status)
-                    }
+                    };
+
+                    style.border.radius = iced::border::Radius {
+                        top_left: tab_radius,
+                        top_right: tab_radius,
+                        bottom_right: 0.0,
+                        bottom_left: 0.0,
+                    };
+
+                    style
                 }),
             button(text("Tcp").align_x(alignment::Horizontal::Center))
-                .width(Length::Fill)
+                // .width(Length::Fill)
+                .width(150)
                 .on_press(Message::Navigation(NavigationMessage::GoToTcpPage))
-                .style(|theme: &Theme, status| {
-                    if let Page::Tcp = self.page {
+                .style(move |theme: &Theme, status| {
+                    let mut style = if let Page::Tcp = self.page {
                         button::primary(theme, status)
                     } else {
                         button::secondary(theme, status)
-                    }
+                    };
+
+                    style.border.radius = iced::border::Radius {
+                        top_left: tab_radius,
+                        top_right: tab_radius,
+                        bottom_right: 0.0,
+                        bottom_left: 0.0,
+                    };
+
+                    style
                 }),
+            horizontal_space(),
             button(row![
                 text(""),
                 svg(svg::Handle::from_path(PathBuf::from("./assets/gear.svg")))
@@ -198,14 +233,31 @@ impl State {
             ])
             .width(Length::Shrink)
             .on_press(Message::Navigation(NavigationMessage::GoToSettingsPage))
-            .style(|theme: &Theme, status| {
-                if let Page::Settings = self.page {
-                    button::primary(theme, status)
-                } else {
-                    button::secondary(theme, status)
+            .style(|_, _| {
+                button::Style {
+                    background: None,
+                    text_color: Color::BLACK,
+                    border: Border::default().rounded(500),
+                    shadow: Shadow::default(),
                 }
-            }),
-        ];
+            }) // .style(move |theme: &Theme, status| {
+               //     let mut style = if let Page::Settings = self.page {
+               //         button::primary(theme, status)
+               //     } else {
+               //         button::secondary(theme, status)
+               //     };
+
+               //     style.border.radius = iced::border::Radius {
+               //         top_left: tab_radius,
+               //         top_right: tab_radius,
+               //         bottom_right: tab_radius,
+               //         bottom_left: tab_radius,
+               //     };
+
+               //     style
+               // }),
+        ]
+        .spacing(5);
 
         let page: Element<Message> = match self.page {
             Page::Fsw => fsw_page(self),
@@ -221,11 +273,11 @@ impl State {
         .width(Length::Fill)
         .height(Length::Fill)
         .align_x(Alignment::End)
-        .align_y(Alignment::End)
-        .padding(20);
+        .align_y(Alignment::End);
 
         let main_view = column![
             navigation,
+            horizontal_rule(0),
             container(page)
                 .center_x(Length::Fill)
                 .center_y(Length::Fill),
@@ -1277,9 +1329,39 @@ fn toasts(state: &State) -> Element<Message> {
     let toasts = state
         .toasts
         .iter()
-        .map(|toast| column![vertical_space().height(10), toast_widget(&toast)].into());
+        .rev()
+        .map(|toast| toast_widget(&toast).into());
 
-    Column::new().width(Length::Fill).extend(toasts).into()
+    scrollable(
+        Column::new()
+            .width(Length::Fill)
+            .spacing(10)
+            .padding([0, 10])
+            .extend(toasts)
+            .push(vertical_space().height(0)),
+    )
+    .anchor_bottom()
+    .style(|_, _| scrollable::Style {
+        container: container::Style::default(),
+        vertical_rail: scrollable::Rail {
+            background: None,
+            border: Border::default(),
+            scroller: scrollable::Scroller {
+                color: Color::TRANSPARENT,
+                border: Border::default(),
+            },
+        },
+        horizontal_rail: scrollable::Rail {
+            background: None,
+            border: Border::default(),
+            scroller: scrollable::Scroller {
+                color: Color::TRANSPARENT,
+                border: Border::default(),
+            },
+        },
+        gap: None,
+    })
+    .into()
 }
 
 fn toast_widget(toast: &Toast) -> Element<Message> {
@@ -1366,19 +1448,39 @@ impl Default for State {
             toasts: vec![
                 Toast {
                     id: 1,
-                    message: "Error: Failed to establish TCP connection to 192.168.1.10 on port 8080. Handshake timeout after 30 seconds. The server might be down, unreachable, or blocking the connection. Please check network settings. ".to_owned(),
+                    message: "1 Error: Failed to establish TCP connection to 192.168.1.10 on port 8080. Handshake timeout after 30 seconds. The server might be down, unreachable, or blocking the connection. Please check network settings. ".to_owned(),
                     severity: Severity::Error,
                 },
                 Toast {
                     id: 2,
-                    message: "About to start encryption.".to_owned(),
+                    message: "2 About to start encryption.".to_owned(),
                     severity: Severity::Info,
                 },
                 Toast {
                     id: 3,
-                    message: "File succesfully sent.".to_owned(),
+                    message: "3 File succesfully sent.".to_owned(),
                     severity: Severity::Success,
-                }
+                },
+                // Toast {
+                //     id: 4,
+                //     message: "4 Error: Failed to establish TCP connection to 192.168.1.10 on port 8080. Handshake timeout after 30 seconds. The server might be down, unreachable, or blocking the connection. Please check network settings. ".to_owned(),
+                //     severity: Severity::Error,
+                // },
+                // Toast {
+                //     id: 5,
+                //     message: "5 About to start encryption.".to_owned(),
+                //     severity: Severity::Info,
+                // },
+                // Toast {
+                //     id: 6,
+                //     message: "6 File succesfully sent.".to_owned(),
+                //     severity: Severity::Success,
+                // },
+                // Toast {
+                //     id: 7,
+                //     message: "7 Error: Failed to establish TCP connection to 192.168.1.10 on port 8080. Handshake timeout after 30 seconds. The server might be down, unreachable, or blocking the connection. Please check network settings. ".to_owned(),
+                //     severity: Severity::Success,
+                // }
             ]
         }
     }
