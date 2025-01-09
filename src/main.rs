@@ -66,7 +66,7 @@ async fn process_file(
     op: Operation,
     key: String,
     dest_dir: &Path,
-) -> Result<(), std::io::Error> {
+) -> anyhow::Result<()> {
     let mut file_handle = tokio::fs::OpenOptions::new().read(true).open(&file).await?;
     let file_content = {
         let mut file_buffer = match file_handle.metadata().await {
@@ -80,7 +80,7 @@ async fn process_file(
     let processed_file_content = match op {
         Operation::Encrypt => alg.encrypt(&file_content, key),
         Operation::Decrypt => alg.decrypt(&file_content, key),
-    };
+    }?;
 
     let new_file_path = get_new_file_path(file, dest_dir, op);
     let mut new_file = tokio::fs::File::create(new_file_path).await?;
@@ -109,34 +109,34 @@ async fn main() -> std::result::Result<(), iced::Error> {
 }
 
 trait Algoritham {
-    fn encrypt(&self, data: &[u8], key: String) -> Vec<u8>;
-    fn decrypt(&self, data: &[u8], key: String) -> Vec<u8>;
+    fn encrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>>;
+    fn decrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>>;
 }
 
 struct Enigma {}
 impl Algoritham for Enigma {
-    fn encrypt(&self, data: &[u8], key: String) -> Vec<u8> {
+    fn encrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>> {
         let _ = key;
-        data.to_owned()
+        Ok(data.to_owned())
     }
 
-    fn decrypt(&self, data: &[u8], key: String) -> Vec<u8> {
+    fn decrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>> {
         let _ = key;
-        data.to_owned()
+        Ok(data.to_owned())
     }
 }
 
 #[allow(clippy::upper_case_acronyms)]
 struct XXTEA {}
 impl Algoritham for XXTEA {
-    fn encrypt(&self, data: &[u8], key: String) -> Vec<u8> {
+    fn encrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>> {
         let _ = key;
-        data.to_owned()
+        Ok(data.to_owned())
     }
 
-    fn decrypt(&self, data: &[u8], key: String) -> Vec<u8> {
+    fn decrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>> {
         let _ = key;
-        data.to_owned()
+        Ok(data.to_owned())
     }
 }
 
@@ -144,14 +144,14 @@ use magic_crypt::{new_magic_crypt, MagicCryptTrait};
 
 struct Magic {}
 impl Algoritham for Magic {
-    fn encrypt(&self, data: &[u8], key: String) -> Vec<u8> {
+    fn encrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>> {
         let mc = new_magic_crypt!(&key, 256);
-        mc.encrypt_bytes_to_bytes(data)
+        Ok(mc.encrypt_bytes_to_bytes(data))
     }
 
-    fn decrypt(&self, data: &[u8], key: String) -> Vec<u8> {
+    fn decrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>> {
         let mc = new_magic_crypt!(&key, 256);
-        mc.decrypt_bytes_to_bytes(data).unwrap()
+        Ok(mc.decrypt_bytes_to_bytes(data)?)
     }
 }
 
@@ -353,6 +353,21 @@ impl State {
                         .expect("This should not allow UI")
                         .to_owned();
 
+                    if match (dir_to_watch.canonicalize(), dest_dir.canonicalize()) {
+                        (Ok(canonical_path1), Ok(canonical_path2)) => {
+                            canonical_path1 == canonical_path2
+                        }
+                        _ => false,
+                    } {
+                        eprintln!("Source and destination directory are the same. This would create an infinite loop.");
+                        push_toast(
+                            &self.toasts,
+                            "Source and destination directory are the same. This would create an infinite loop.",
+                            Severity::Error,
+                        );
+                        return Task::none();
+                    };
+
                     let algoritham_option = self.algoritham_option.clone();
                     let key = self.key.clone();
                     let operation = self.fsw.mode.to_owned();
@@ -411,12 +426,15 @@ impl State {
                                         );
                                     }
                                     Err(err) => {
-                                        let s = format!(
+                                        eprintln!(
                                             "There was an error processing the file: {:?}",
                                             err
                                         );
-                                        eprintln!("{}", s);
-                                        push_toast(&toasts, &s, Severity::Error);
+                                        push_toast(
+                                            &toasts,
+                                            "There was an error processing the file",
+                                            Severity::Error,
+                                        );
                                     }
                                 }
                             });
@@ -501,11 +519,12 @@ impl State {
                                     );
                                 }
                                 Err(err) => {
-                                    let s = format!(
-                                        "There was an error processing the file: {:?}",
-                                        err
+                                    eprintln!("There was an error processing the file: {:?}", err);
+                                    push_toast(
+                                        &toasts,
+                                        "There was an error processing the file",
+                                        Severity::Error,
                                     );
-                                    push_toast(&toasts, &s, Severity::Error);
                                 }
                             }
                         },
@@ -543,11 +562,12 @@ impl State {
                                     );
                                 }
                                 Err(err) => {
-                                    let s = format!(
-                                        "There was an error processing the file: {:?}",
-                                        err
+                                    eprintln!("There was an error processing the file: {:?}", err);
+                                    push_toast(
+                                        &toasts,
+                                        "There was an error processing the file",
+                                        Severity::Error,
                                     );
-                                    push_toast(&toasts, &s, Severity::Error);
                                 }
                             }
                         },
@@ -638,7 +658,7 @@ impl State {
                                 Err(err) => {
                                     eprintln!("Error opening the file when trying to send it over tcp: {:?}", err);
                                     push_toast(&toasts, "Couldn't open the file", Severity::Error);
-                                    panic!()
+                                    return ();
                                 }
                             };
 
@@ -651,7 +671,7 @@ impl State {
                                 Err(err) => {
                                     eprintln!("Error encoding file name len-prefix {:?}", err);
                                     push_toast(&toasts, "Error", Severity::Error);
-                                    panic!()
+                                    return ();
                                 }
                             };
                             let file_name_prefix = &file_name_leb128_buf[..file_name_leb128_bytes];
@@ -661,7 +681,7 @@ impl State {
                                 Err(err) => {
                                     eprintln!("Error trying to read file metadata: {:?}", err);
                                     push_toast(&toasts, "Error", Severity::Error);
-                                    panic!()
+                                    return ();
                                 }
                             };
 
@@ -672,11 +692,18 @@ impl State {
                                 Err(err) => {
                                     eprintln!("Error reading the file when trying to send it over tcp: {:?}", err);
                                     push_toast(&toasts, "Couldn't read the file", Severity::Error);
-                                    panic!()
+                                    return ();
                                 }
                             };
 
-                            let encrypted_file_content = alg.encrypt(&file_content, key);
+                            let encrypted_file_content = match alg.encrypt(&file_content, key) {
+                                Ok(v) => v,
+                                Err(err) => {
+                                    eprintln!("Error encrypting file content: {:?}", err);
+                                    push_toast(&toasts, "Error", Severity::Error);
+                                    return ();
+                                }
+                            };
 
                             let hash = hash::hash_file(&encrypted_file_content);
 
@@ -700,7 +727,7 @@ impl State {
                                                 "An error occurred while sending data",
                                                 Severity::Error,
                                             );
-                                            panic!();
+                                            return ();
                                         }
                                     };
 
@@ -715,7 +742,7 @@ impl State {
                                                 "An error occurred while sending data",
                                                 Severity::Error,
                                             );
-                                            panic!();
+                                            return ();
                                         }
                                     };
 
@@ -730,7 +757,7 @@ impl State {
                                                 "An error occurred while sending data",
                                                 Severity::Error,
                                             );
-                                            panic!()
+                                            return ();
                                         }
                                     };
 
@@ -746,7 +773,7 @@ impl State {
                                                 "An error occurred while sending data",
                                                 Severity::Error,
                                             );
-                                            panic!()
+                                            return ();
                                         }
                                     }
 
@@ -764,7 +791,7 @@ impl State {
                                                 "An error occurred while sending data",
                                                 Severity::Error,
                                             );
-                                            panic!()
+                                            return ();
                                         }
                                     }
 
@@ -782,7 +809,7 @@ impl State {
                                                 "An error occurred while sending data",
                                                 Severity::Error,
                                             );
-                                            panic!()
+                                            return ();
                                         }
                                     };
 
@@ -816,7 +843,7 @@ impl State {
                                         "Failed to establish a connection",
                                         Severity::Error,
                                     );
-                                    panic!();
+                                    return ();
                                 }
                             };
                         },
@@ -868,7 +895,7 @@ impl State {
                             Err(err) => {
                                 println!("Couldn't start listening: {:?}", err);
                                 push_toast(&toasts, "Couldn't start listening", Severity::Error);
-                                panic!();
+                                return ();
                             }
                         };
 
@@ -892,28 +919,33 @@ impl State {
                             let toasts = toasts.clone();
                             tokio::spawn(async move {
                                 let mut socket = BufReader::new(socket);
-                                socket.fill_buf().await.unwrap_or_else(|err| {
-                                    println!("Error filling buffer from tcp stream: {:?}", err);
-                                    push_toast(
-                                        &toasts,
-                                        "An error occurred while fetching data",
-                                        Severity::Error,
-                                    );
-                                    panic!();
-                                });
+                                match socket.fill_buf().await {
+                                    Ok(v) => v,
+                                    Err(err) => {
+                                        println!("Error filling buffer from tcp stream: {:?}", err);
+                                        push_toast(
+                                            &toasts,
+                                            "An error occurred while fetching data",
+                                            Severity::Error,
+                                        );
+                                        return ();
+                                    }
+                                };
 
                                 let file_name_len = {
                                     let mut buf = socket.buffer();
-                                    let file_name_len = leb128::read::unsigned(&mut buf)
-                                        .unwrap_or_else(|err| {
+                                    let file_name_len = match leb128::read::unsigned(&mut buf) {
+                                        Ok(v) => v,
+                                        Err(err) => {
                                             eprintln!("Error occured while extracting len-prefix of file name: {:?}", err);
                                             push_toast(
                                                 &toasts,
                                                 "An error occurred while extracting data",
                                                 Severity::Error,
                                             );
-                                            panic!();
-                                        });
+                                            return ();
+                                        }
+                                    };
 
                                     let bytes_to_consume = socket.buffer().len() - buf.len();
                                     socket.consume(bytes_to_consume);
@@ -924,10 +956,9 @@ impl State {
 
                                 let mut file_name_buf =
                                     vec![0u8; file_name_len.try_into().unwrap()];
-                                socket
-                                    .read_exact(&mut file_name_buf)
-                                    .await
-                                    .unwrap_or_else(|err| {
+                                match socket.read_exact(&mut file_name_buf).await {
+                                    Ok(v) => v,
+                                    Err(err) => {
                                         eprintln!(
                                             "Error occured while extracting file name {:?}",
                                             err
@@ -937,11 +968,13 @@ impl State {
                                             "An error occurred while extracting data",
                                             Severity::Error,
                                         );
-                                        panic!();
-                                    });
+                                        return ();
+                                    }
+                                };
 
-                                let file_name =
-                                    std::str::from_utf8(&file_name_buf).unwrap_or_else(|err| {
+                                let file_name = match std::str::from_utf8(&file_name_buf) {
+                                    Ok(v) => v,
+                                    Err(err) => {
                                         eprintln!(
                                             "Error occured while extracting file name {:?}",
                                             err
@@ -951,61 +984,66 @@ impl State {
                                             "An error occurred while extracting data",
                                             Severity::Error,
                                         );
-                                        panic!();
-                                    });
-
+                                        return ();
+                                    }
+                                };
                                 println!("File name: {:}", file_name);
 
-                                let file_len = socket.read_i64_le().await.unwrap_or_else(|err| {
-                                    eprintln!(
-                                        "Error occured while extracting file length {:?}",
-                                        err
-                                    );
-                                    push_toast(
-                                        &toasts,
-                                        "An error occurred while extracting data",
-                                        Severity::Error,
-                                    );
-                                    panic!();
-                                });
+                                let file_len = match socket.read_i64_le().await {
+                                    Ok(v) => v,
+                                    Err(err) => {
+                                        eprintln!(
+                                            "Error occured while extracting file length {:?}",
+                                            err
+                                        );
+                                        push_toast(
+                                            &toasts,
+                                            "An error occurred while extracting data",
+                                            Severity::Error,
+                                        );
+                                        return ();
+                                    }
+                                };
                                 println!("Content lenght: {:}", file_len);
 
-                                let hash_len = socket.read_i32_le().await.unwrap_or_else(|err| {
-                                    eprintln!(
-                                        "Error occured while extracting hash length {:?}",
-                                        err
-                                    );
-                                    push_toast(
-                                        &toasts,
-                                        "An error occurred while extracting data",
-                                        Severity::Error,
-                                    );
-                                    panic!();
-                                });
+                                let hash_len = match socket.read_i32_le().await {
+                                    Ok(v) => v,
+                                    Err(err) => {
+                                        eprintln!(
+                                            "Error occured while extracting hash length {:?}",
+                                            err
+                                        );
+                                        push_toast(
+                                            &toasts,
+                                            "An error occurred while extracting data",
+                                            Severity::Error,
+                                        );
+                                        return ();
+                                    }
+                                };
                                 println!("Hash lenght: {:}", hash_len);
 
                                 let mut hash_buffer = vec![0_u8; hash_len.try_into().unwrap()];
-                                socket
-                                    .read_exact(&mut hash_buffer)
-                                    .await
-                                    .unwrap_or_else(|err| {
+                                match socket.read_exact(&mut hash_buffer).await {
+                                    Ok(v) => v,
+                                    Err(err) => {
                                         eprintln!("Error occured while extracting hash {:?}", err);
                                         push_toast(
                                             &toasts,
                                             "An error occurred while extracting data",
                                             Severity::Error,
                                         );
-                                        panic!();
-                                    });
+                                        return ();
+                                    }
+                                };
 
                                 let hash = String::from_utf8_lossy(&hash_buffer);
                                 println!("Recieved hash: {:}", hash);
 
                                 let mut encrypted_content = Vec::new();
-                                socket
-                                    .read_to_end(&mut encrypted_content)
-                                    .await
-                                    .unwrap_or_else(|err| {
+                                match socket.read_to_end(&mut encrypted_content).await {
+                                    Ok(v) => v,
+                                    Err(err) => {
                                         eprintln!(
                                             "Error occured while extracting encrypted content {:?}",
                                             err
@@ -1015,20 +1053,25 @@ impl State {
                                             "An error occurred while extracting data",
                                             Severity::Error,
                                         );
-                                        panic!();
-                                    });
+                                        return ();
+                                    }
+                                };
 
-                                socket.shutdown().await.unwrap_or_else(|err| {
-                                    eprintln!(
-                                        "An error occurred while closing the connection: {:?}",
-                                        err
-                                    );
-                                    push_toast(
-                                        &toasts,
-                                        "An error occurred while closing the connection",
-                                        Severity::Error,
-                                    );
-                                });
+                                match socket.shutdown().await {
+                                    Ok(v) => v,
+                                    Err(err) => {
+                                        eprintln!(
+                                            "An error occurred while closing the connection: {:?}",
+                                            err
+                                        );
+                                        push_toast(
+                                            &toasts,
+                                            "An error occurred while closing the connection",
+                                            Severity::Error,
+                                        );
+                                    }
+                                };
+
                                 drop(socket);
 
                                 println!(
@@ -1039,7 +1082,15 @@ impl State {
                                 let alg = get_algoritham(&algoritham_option);
                                 let key = key.lock().unwrap().to_owned();
 
-                                let decrypted_file_content = alg.decrypt(&encrypted_content, key);
+                                let decrypted_file_content =
+                                    match alg.decrypt(&encrypted_content, key) {
+                                        Ok(v) => v,
+                                        Err(err) => {
+                                            eprintln!("Error decrypting file content: {:?}", err);
+                                            push_toast(&toasts, "Error", Severity::Error);
+                                            return ();
+                                        }
+                                    };
                                 println!(
                                     "Decrypted data:\n {:?}",
                                     String::from_utf8_lossy(&decrypted_file_content)
@@ -1613,7 +1664,7 @@ fn toasts_widget(state: &State) -> Element<Message> {
 
 fn toast_widget(toast: Toast) -> Element<'static, Message> {
     let severity = toast.severity;
-    let message = format!("id: {}, {}", toast.id, toast.message);
+    let message = toast.message;
 
     opaque(
         container(row![
@@ -1663,8 +1714,8 @@ struct Toast {
     timestamp: SystemTime,
 }
 
-const SHORT_TOAST_DURATION: Duration = Duration::from_secs(1);
-const LONG_TOAST_DURATION: Duration = Duration::from_secs(5);
+const SHORT_TOAST_DURATION: Duration = Duration::from_secs(3);
+const LONG_TOAST_DURATION: Duration = Duration::from_secs(10);
 
 impl Toast {
     fn expired(&self) -> bool {
