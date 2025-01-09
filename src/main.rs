@@ -68,7 +68,6 @@ async fn process_file(
     dest_dir: &Path,
 ) -> Result<(), std::io::Error> {
     let mut file_handle = tokio::fs::OpenOptions::new().read(true).open(&file).await?;
-
     let file_content = {
         let mut file_buffer = match file_handle.metadata().await {
             Ok(metadata) => Vec::with_capacity(metadata.len().try_into().unwrap()),
@@ -383,8 +382,17 @@ impl State {
                             }
 
                             let file_path = event.paths.first().unwrap().to_owned();
+                            // println!("New File: {:?}", file_path);
 
-                            println!("Created: {:?}", file_path);
+                            // "Waiting" for file to become ready
+                            for _ in 0..5 {
+                                match tokio::fs::File::open(&file_path).await {
+                                    Ok(_) => break,
+                                    Err(_) => {
+                                        tokio::time::sleep(Duration::from_millis(100)).await;
+                                    }
+                                }
+                            }
 
                             let alg = get_algoritham(&algoritham_option);
                             let key = key.lock().unwrap().to_owned();
@@ -407,6 +415,7 @@ impl State {
                                             "There was an error processing the file: {:?}",
                                             err
                                         );
+                                        eprintln!("{}", s);
                                         push_toast(&toasts, &s, Severity::Error);
                                     }
                                 }
@@ -1097,7 +1106,7 @@ impl State {
 
                 Task::none()
             }
-            Message::Empty => {
+            Message::Tick => {
                 let unfiltered = self.toasts.read().unwrap();
                 let unfiltered_len = unfiltered.len();
 
@@ -1118,6 +1127,7 @@ impl State {
 
                 Task::none()
             }
+            Message::Empty => Task::none(),
         }
     }
     fn subscription(&self) -> Subscription<Message> {
@@ -1130,7 +1140,7 @@ impl State {
                 }
             })
         })
-        .map(|_| Message::Empty)
+        .map(|_| Message::Tick)
     }
 }
 
@@ -1833,6 +1843,7 @@ pub enum Message {
     AlgorithamChanged(AlgorithamOption),
     KeyChanged(String),
     DeleteToast(usize),
+    Tick,
     Empty,
 }
 
