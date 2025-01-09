@@ -12,6 +12,7 @@ use iced::{
 };
 use notify::{recommended_watcher, RecursiveMode, Watcher};
 use rfd::AsyncFileDialog;
+use std::path::Path;
 use std::time::{Duration, SystemTime};
 use std::{
     fmt::Display,
@@ -35,7 +36,7 @@ enum Operation {
     Decrypt,
 }
 
-fn get_new_file_name(file: &PathBuf, op: Operation) -> String {
+fn get_new_file_name(file: &Path, op: Operation) -> String {
     let file_stem = file.file_stem().unwrap();
     let extension = file.extension().unwrap_or_default();
 
@@ -53,8 +54,8 @@ fn get_new_file_name(file: &PathBuf, op: Operation) -> String {
     }
 }
 
-fn get_new_file_path(file: &PathBuf, dest_dir: &PathBuf, op: Operation) -> PathBuf {
-    let mut tmp = dest_dir.clone();
+fn get_new_file_path(file: &Path, dest_dir: &Path, op: Operation) -> PathBuf {
+    let mut tmp = dest_dir.to_path_buf().clone();
     tmp.push(get_new_file_name(file, op));
     tmp
 }
@@ -64,7 +65,7 @@ async fn process_file(
     alg: Box<dyn Algoritham + Send>,
     op: Operation,
     key: String,
-    dest_dir: &PathBuf,
+    dest_dir: &Path,
 ) -> Result<(), std::io::Error> {
     let mut file_handle = tokio::fs::OpenOptions::new().read(true).open(&file).await?;
 
@@ -92,9 +93,10 @@ async fn process_file(
 #[tokio::main]
 async fn main() -> std::result::Result<(), iced::Error> {
     let icon_data = include_bytes!("../assets/icon.png");
-
-    let mut window_settings = iced::window::Settings::default();
-    window_settings.icon = iced::window::icon::from_file_data(icon_data, None).ok();
+    let window_settings = iced::window::Settings {
+        icon: iced::window::icon::from_file_data(icon_data, None).ok(),
+        ..Default::default()
+    };
 
     iced::application("ZI", State::update, State::view)
         // .theme(|_| iced::Theme::SolarizedDark)
@@ -272,7 +274,7 @@ impl State {
 
         let toasts_overlay = container(row![
             horizontal_space().width(Length::FillPortion(1)),
-            container(toasts(self)).width(Length::FillPortion(2))
+            container(toasts_widget(self)).width(Length::FillPortion(2))
         ])
         .width(Length::Fill)
         .height(Length::Fill)
@@ -395,7 +397,7 @@ impl State {
                                 {
                                     Ok(_) => {
                                         push_toast(
-                                            toasts,
+                                            &toasts,
                                             "Successfully processed file",
                                             Severity::Success,
                                         );
@@ -405,7 +407,7 @@ impl State {
                                             "There was an error processing the file: {:?}",
                                             err
                                         );
-                                        push_toast(toasts, &s, Severity::Error);
+                                        push_toast(&toasts, &s, Severity::Error);
                                     }
                                 }
                             });
@@ -476,11 +478,27 @@ impl State {
 
                     let dest_dir = self.manual.to.to_owned().expect("UI should not allow this");
 
+                    let toasts = self.toasts.clone();
                     Task::perform(
                         async move {
-                            process_file(&file_path, alg, Operation::Encrypt, key, &dest_dir)
+                            match process_file(&file_path, alg, Operation::Encrypt, key, &dest_dir)
                                 .await
-                                .unwrap();
+                            {
+                                Ok(_) => {
+                                    push_toast(
+                                        &toasts,
+                                        "Successfully processed file",
+                                        Severity::Success,
+                                    );
+                                }
+                                Err(err) => {
+                                    let s = format!(
+                                        "There was an error processing the file: {:?}",
+                                        err
+                                    );
+                                    push_toast(&toasts, &s, Severity::Error);
+                                }
+                            }
                         },
                         |_| Message::Manual(ManualPageMessage::EncryptionDone),
                     )
@@ -502,11 +520,27 @@ impl State {
                         .expect("UI should not allow this");
 
                     let dest_dir = self.manual.to.to_owned().expect("UI should not allow this");
+                    let toasts = self.toasts.clone();
                     Task::perform(
                         async move {
-                            process_file(&file_path, alg, Operation::Decrypt, key, &dest_dir)
+                            match process_file(&file_path, alg, Operation::Decrypt, key, &dest_dir)
                                 .await
-                                .unwrap();
+                            {
+                                Ok(_) => {
+                                    push_toast(
+                                        &toasts,
+                                        "Successfully processed file",
+                                        Severity::Success,
+                                    );
+                                }
+                                Err(err) => {
+                                    let s = format!(
+                                        "There was an error processing the file: {:?}",
+                                        err
+                                    );
+                                    push_toast(&toasts, &s, Severity::Error);
+                                }
+                            }
                         },
                         |_| Message::Manual(ManualPageMessage::DecryptionDone),
                     )
@@ -556,8 +590,7 @@ impl State {
                     Task::none()
                 }
                 TcpPageMessage::Send => {
-                    self.tcp.is_sending = true;
-
+                    let toasts = self.toasts.clone();
                     let address = format!(
                         "{}:{}",
                         self.tcp
@@ -577,22 +610,26 @@ impl State {
                         .expect("UI logic should not allow this")
                         .to_owned();
 
-                    let file_name = file_path
-                        .file_name()
-                        .expect("Couldn't get file name")
-                        .to_string_lossy()
-                        .to_string();
+                    let file_name = match file_path.file_name() {
+                        Some(str) => str.to_string_lossy().to_string(),
+                        None => {
+                            push_toast(&toasts, "Coulnd't extract file name", Severity::Error);
+                            return Task::none();
+                        }
+                    };
 
-                    let algoritham_option = self.algoritham_option.clone();
-                    let key = self.key.clone();
+                    let alg = get_algoritham(&self.algoritham_option);
+                    let key = self.key.clone().lock().unwrap().to_owned();
 
+                    self.tcp.is_sending = true;
                     Task::perform(
                         async move {
                             let mut file = match tokio::fs::File::open(file_path).await {
                                 Ok(s) => s,
                                 Err(err) => {
-                                    println!("Error opening the file when trying to send it over tcp: {:?}", err);
-                                    return;
+                                    eprintln!("Error opening the file when trying to send it over tcp: {:?}", err);
+                                    push_toast(&toasts, "Couldn't open the file", Severity::Error);
+                                    panic!()
                                 }
                             };
 
@@ -603,8 +640,9 @@ impl State {
                             ) {
                                 Ok(b) => b,
                                 Err(err) => {
-                                    println!("Error encoding string length-prefix {:?}", err);
-                                    return;
+                                    eprintln!("Error encoding file name len-prefix {:?}", err);
+                                    push_toast(&toasts, "Error", Severity::Error);
+                                    panic!()
                                 }
                             };
                             let file_name_prefix = &file_name_leb128_buf[..file_name_leb128_bytes];
@@ -612,8 +650,9 @@ impl State {
                             let file_size = match file.metadata().await {
                                 Ok(metadata) => metadata.len(),
                                 Err(err) => {
-                                    println!("Error trying to read file metadata: {:?}", err);
-                                    return;
+                                    eprintln!("Error trying to read file metadata: {:?}", err);
+                                    push_toast(&toasts, "Error", Severity::Error);
+                                    panic!()
                                 }
                             };
 
@@ -622,134 +661,153 @@ impl State {
                             match file.read_to_end(&mut file_content).await {
                                 Ok(_) => (),
                                 Err(err) => {
-                                    println!("Error reading the file when trying to send it over tcp: {:?}", err);
-                                    return;
+                                    eprintln!("Error reading the file when trying to send it over tcp: {:?}", err);
+                                    push_toast(&toasts, "Couldn't read the file", Severity::Error);
+                                    panic!()
                                 }
                             };
-
-                            println!("Send about to lock alg");
-                            let alg = get_algoritham(&algoritham_option);
-                            let key = key.lock().unwrap().to_owned();
 
                             let encrypted_file_content = alg.encrypt(&file_content, key);
 
                             let hash = hash::hash_file(&encrypted_file_content);
 
-                            println!("Send about to connect");
-                            let tmp = TcpStream::connect(address).await;
-                            println!("Send connected");
-                            match tmp {
+                            match TcpStream::connect(address).await {
                                 Ok(mut stream) => {
-                                    println!("Successfully connected to server");
+                                    println!("Successfully connected to the server");
+                                    push_toast(&toasts, "Established connection", Severity::Info);
                                     match stream.write_all(file_name_prefix).await {
                                         Ok(_) => {
-                                            println!("Successfully sent file name length-prefix")
+                                            println!(
+                                                "Successfully sent len-prefix of the file name"
+                                            )
                                         }
                                         Err(err) => {
-                                            println!(
-                                                "Error sending file name length-prefix over tcp connection: {:?}",
+                                            eprintln!(
+                                                "Error sending len-prefix of the file name: {:?}",
                                                 err
                                             );
-                                            return;
+                                            push_toast(
+                                                &toasts,
+                                                "An error occurred while sending data",
+                                                Severity::Error,
+                                            );
+                                            panic!();
                                         }
                                     };
 
                                     match stream.write_all(file_name.as_bytes()).await {
                                         Ok(_) => {
-                                            println!("Successfully sent file name")
+                                            println!("Successfully sent file name: {}", file_name);
                                         }
                                         Err(err) => {
-                                            println!(
-                                                "Error sending file name over tcp connection: {:?}",
-                                                err
+                                            eprintln!("Error sending file name : {:?}", err);
+                                            push_toast(
+                                                &toasts,
+                                                "An error occurred while sending data",
+                                                Severity::Error,
                                             );
-                                            return;
+                                            panic!();
                                         }
                                     };
 
                                     match stream.write_i64_le(file_size.try_into().unwrap()).await {
                                         Ok(_) => {
-                                            println!(
-                                                "Successfully sent file size: {:?}",
-                                                file_size
-                                            );
+                                            println!("Successfully sent file size: {}", file_size);
                                         }
                                         Err(err) => {
-                                            println!(
-                                                "Error sending file size over tcp connection: {:?}",
-                                                err
+                                            eprintln!("Error sending file size : {:?}", err);
+                                            push_toast(
+                                                &toasts,
+                                                "An error occurred while sending data",
+                                                Severity::Error,
                                             );
-                                            return;
+                                            panic!()
                                         }
                                     };
 
                                     match stream.write_i32_le(hash.len().try_into().unwrap()).await
                                     {
                                         Ok(_) => {
-                                            println!(
-                                                "Succesffully sent hash size {:?}",
-                                                hash.len()
-                                            );
+                                            println!("Succesffully sent hash size {}", hash.len());
                                         }
                                         Err(err) => {
-                                            println!(
-                                                "Error sending hash size over tcp connection: {:?}",
-                                                err
+                                            eprintln!("Error sending hash size : {:?}", err);
+                                            push_toast(
+                                                &toasts,
+                                                "An error occurred while sending data",
+                                                Severity::Error,
                                             );
-                                            return;
+                                            panic!()
                                         }
                                     }
 
                                     match stream.write_all(&hash).await {
                                         Ok(_) => {
                                             println!(
-                                                "Successfully sent hash: {:?}",
+                                                "Successfully sent hash:\n {}",
                                                 String::from_utf8_lossy(&hash)
                                             );
                                         }
                                         Err(err) => {
-                                            println!(
-                                                "Error sending hash over tcp connection: {:?}",
-                                                err
+                                            eprintln!("Error sending hash: {:?}", err);
+                                            push_toast(
+                                                &toasts,
+                                                "An error occurred while sending data",
+                                                Severity::Error,
                                             );
-                                            return;
+                                            panic!()
                                         }
                                     }
 
                                     match stream.write_all(&encrypted_file_content).await {
                                         Ok(_) => {
                                             println!(
-                                                "Successfully sent encrypted file content: {:?}",
+                                                "Successfully sent encrypted file content:\n {:?}",
                                                 String::from_utf8_lossy(&encrypted_file_content)
                                             )
                                         }
                                         Err(err) => {
-                                            println!(
-                                                "Error sending file content over tcp connection: {:?}",
-                                                err
+                                            eprintln!("Error sending file content: {:?}", err);
+                                            push_toast(
+                                                &toasts,
+                                                "An error occurred while sending data",
+                                                Severity::Error,
                                             );
-                                            return;
+                                            panic!()
                                         }
                                     };
+
+                                    push_toast(
+                                        &toasts,
+                                        "The file was successfully sent",
+                                        Severity::Success,
+                                    );
 
                                     match stream.shutdown().await {
                                         Ok(_) => {
                                             println!("Successfully closed connection");
                                         }
                                         Err(err) => {
-                                            println!(
-                                                "Error sending file contents over tcp connection: {:?}",
+                                            eprintln!(
+                                                "An error occurred while closing the connection: {:?}",
                                                 err
                                             );
-                                            #[allow(clippy::needless_return)]
-                                            return;
+                                            push_toast(
+                                                &toasts,
+                                                "An error occurred while closing the connection",
+                                                Severity::Error,
+                                            );
                                         }
                                     };
                                 }
                                 Err(err) => {
                                     println!("Error opening connection to the server {:?}", err);
-                                    #[allow(clippy::needless_return)]
-                                    return;
+                                    push_toast(
+                                        &toasts,
+                                        "Failed to establish a connection",
+                                        Severity::Error,
+                                    );
+                                    panic!();
                                 }
                             };
                         },
@@ -778,6 +836,10 @@ impl State {
                     Task::none()
                 }
                 TcpPageMessage::StartListening => {
+                    let toasts = self.toasts.clone();
+
+                    // TODO
+                    // UI should not allow this
                     let my_port = self
                         .tcp
                         .my_port
@@ -787,74 +849,181 @@ impl State {
                     let key = self.key.clone();
 
                     let handle = tokio::spawn(async move {
-                        let listener =
-                            match TcpListener::bind(format!("127.0.0.1:{:?}", my_port)).await {
-                                Ok(listener) => {
-                                    println!("Successfully started tcp server");
-                                    listener
-                                }
-                                Err(_) => {
-                                    println!("Couldn't start tcp server");
-                                    return;
-                                }
-                            };
+                        let listener = match TcpListener::bind(format!("127.0.0.1:{:?}", my_port))
+                            .await
+                        {
+                            Ok(listener) => {
+                                println!("Successfully started tcp server");
+                                listener
+                            }
+                            Err(err) => {
+                                println!("Couldn't start listening: {:?}", err);
+                                push_toast(&toasts, "Couldn't start listening", Severity::Error);
+                                panic!();
+                            }
+                        };
 
                         loop {
                             let (socket, addr) = match listener.accept().await {
                                 Ok(val) => val,
                                 Err(err) => {
                                     println!("Error accepting tcp connection: {:?}", err);
+                                    push_toast(&toasts, "Faulty connection", Severity::Error);
                                     continue;
                                 }
                             };
 
-                            println!("Accepted connection: {:?}", addr);
+                            let message = format!("Accepted connection with: {:?}", addr);
+                            println!("{}", message);
+                            push_toast(&toasts, &message, Severity::Info);
 
                             let algoritham_option = algoritham_option.clone();
                             let key = key.clone();
 
+                            let toasts = toasts.clone();
                             tokio::spawn(async move {
                                 let mut socket = BufReader::new(socket);
-                                socket.fill_buf().await.unwrap();
+                                socket.fill_buf().await.unwrap_or_else(|err| {
+                                    println!("Error filling buffer from tcp stream: {:?}", err);
+                                    push_toast(
+                                        &toasts,
+                                        "An error occurred while fetching data",
+                                        Severity::Error,
+                                    );
+                                    panic!();
+                                });
 
                                 let file_name_len = {
                                     let mut buf = socket.buffer();
-                                    let file_name_len = leb128::read::unsigned(&mut buf).unwrap();
+                                    let file_name_len = leb128::read::unsigned(&mut buf)
+                                        .unwrap_or_else(|err| {
+                                            eprintln!("Error occured while extracting len-prefix of file name: {:?}", err);
+                                            push_toast(
+                                                &toasts,
+                                                "An error occurred while extracting data",
+                                                Severity::Error,
+                                            );
+                                            panic!();
+                                        });
 
                                     let bytes_to_consume = socket.buffer().len() - buf.len();
                                     socket.consume(bytes_to_consume);
 
                                     file_name_len
                                 };
-
                                 println!("Length-prefix: {:?}", file_name_len);
 
                                 let mut file_name_buf =
                                     vec![0u8; file_name_len.try_into().unwrap()];
-                                socket.read_exact(&mut file_name_buf).await.unwrap();
+                                socket
+                                    .read_exact(&mut file_name_buf)
+                                    .await
+                                    .unwrap_or_else(|err| {
+                                        eprintln!(
+                                            "Error occured while extracting file name {:?}",
+                                            err
+                                        );
+                                        push_toast(
+                                            &toasts,
+                                            "An error occurred while extracting data",
+                                            Severity::Error,
+                                        );
+                                        panic!();
+                                    });
 
-                                let file_name = std::str::from_utf8(&file_name_buf).unwrap();
-                                println!("File name: {:?}", file_name);
+                                let file_name =
+                                    std::str::from_utf8(&file_name_buf).unwrap_or_else(|err| {
+                                        eprintln!(
+                                            "Error occured while extracting file name {:?}",
+                                            err
+                                        );
+                                        push_toast(
+                                            &toasts,
+                                            "An error occurred while extracting data",
+                                            Severity::Error,
+                                        );
+                                        panic!();
+                                    });
 
-                                let file_len = socket.read_i64_le().await.unwrap();
-                                println!("Content lenght: {:?}", file_len);
+                                println!("File name: {:}", file_name);
 
-                                let hash_len = socket.read_i32_le().await.unwrap();
-                                println!("Hash lenght: {:?}", hash_len);
+                                let file_len = socket.read_i64_le().await.unwrap_or_else(|err| {
+                                    eprintln!(
+                                        "Error occured while extracting file length {:?}",
+                                        err
+                                    );
+                                    push_toast(
+                                        &toasts,
+                                        "An error occurred while extracting data",
+                                        Severity::Error,
+                                    );
+                                    panic!();
+                                });
+                                println!("Content lenght: {:}", file_len);
+
+                                let hash_len = socket.read_i32_le().await.unwrap_or_else(|err| {
+                                    eprintln!(
+                                        "Error occured while extracting hash length {:?}",
+                                        err
+                                    );
+                                    push_toast(
+                                        &toasts,
+                                        "An error occurred while extracting data",
+                                        Severity::Error,
+                                    );
+                                    panic!();
+                                });
+                                println!("Hash lenght: {:}", hash_len);
 
                                 let mut hash_buffer = vec![0_u8; hash_len.try_into().unwrap()];
-                                socket.read_exact(&mut hash_buffer).await.unwrap();
+                                socket
+                                    .read_exact(&mut hash_buffer)
+                                    .await
+                                    .unwrap_or_else(|err| {
+                                        eprintln!("Error occured while extracting hash {:?}", err);
+                                        push_toast(
+                                            &toasts,
+                                            "An error occurred while extracting data",
+                                            Severity::Error,
+                                        );
+                                        panic!();
+                                    });
 
                                 let hash = String::from_utf8_lossy(&hash_buffer);
-                                println!("Recieved hash: {:?}", hash);
+                                println!("Recieved hash: {:}", hash);
 
                                 let mut encrypted_content = Vec::new();
-                                socket.read_to_end(&mut encrypted_content).await.unwrap();
+                                socket
+                                    .read_to_end(&mut encrypted_content)
+                                    .await
+                                    .unwrap_or_else(|err| {
+                                        eprintln!(
+                                            "Error occured while extracting encrypted content {:?}",
+                                            err
+                                        );
+                                        push_toast(
+                                            &toasts,
+                                            "An error occurred while extracting data",
+                                            Severity::Error,
+                                        );
+                                        panic!();
+                                    });
 
-                                socket.shutdown().await.unwrap();
+                                socket.shutdown().await.unwrap_or_else(|err| {
+                                    eprintln!(
+                                        "An error occurred while closing the connection: {:?}",
+                                        err
+                                    );
+                                    push_toast(
+                                        &toasts,
+                                        "An error occurred while closing the connection",
+                                        Severity::Error,
+                                    );
+                                });
+                                drop(socket);
 
                                 println!(
-                                    "Recived encrypted data: {:?}",
+                                    "Recived encrypted data:\n {:?}",
                                     String::from_utf8_lossy(&encrypted_content)
                                 );
 
@@ -863,8 +1032,14 @@ impl State {
 
                                 let decrypted_file_content = alg.decrypt(&encrypted_content, key);
                                 println!(
-                                    "Decrypted data: {:?}",
+                                    "Decrypted data:\n {:?}",
                                     String::from_utf8_lossy(&decrypted_file_content)
+                                );
+
+                                push_toast(
+                                    &toasts,
+                                    "Successfully recieved a file over the tcp",
+                                    Severity::Success,
                                 );
                             });
                         }
@@ -962,11 +1137,11 @@ impl State {
 use std::sync::atomic::{AtomicUsize, Ordering};
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-fn push_toast(toasts: Arc<RwLock<Vec<Toast>>>, message: &str, severity: Severity) {
+fn push_toast(toasts: &Arc<RwLock<Vec<Toast>>>, message: &str, severity: Severity) {
     toasts.write().unwrap().push(Toast {
         id: COUNTER.fetch_add(1, Ordering::Relaxed),
         message: message.to_owned(),
-        severity: severity,
+        severity,
         timestamp: SystemTime::now(),
     });
 }
@@ -1383,7 +1558,7 @@ fn settings_page(state: &State) -> Element<Message> {
     .into()
 }
 
-fn toasts(state: &State) -> Element<Message> {
+fn toasts_widget(state: &State) -> Element<Message> {
     let toasts: Vec<Element<Message>> = state
         .toasts
         .read()
@@ -1391,7 +1566,7 @@ fn toasts(state: &State) -> Element<Message> {
         .clone()
         .into_iter()
         .rev()
-        .map(|toast| -> Element<Message> { toast_widget(toast).into() })
+        .map(|toast| toast_widget(toast))
         .collect();
 
     scrollable(
@@ -1427,7 +1602,7 @@ fn toasts(state: &State) -> Element<Message> {
 }
 
 fn toast_widget(toast: Toast) -> Element<'static, Message> {
-    let severity = toast.severity.clone();
+    let severity = toast.severity;
     let message = format!("id: {}, {}", toast.id, toast.message);
 
     opaque(
@@ -1456,7 +1631,6 @@ fn toast_widget(toast: Toast) -> Element<'static, Message> {
         .padding([10, 10])
         .style(move |theme: &Theme| get_toast_style(theme, severity)),
     )
-    .into()
 }
 
 fn get_toast_style(theme: &Theme, severity: Severity) -> container::Style {
@@ -1491,7 +1665,7 @@ impl Toast {
                 Severity::Info => duration.ge(&SHORT_TOAST_DURATION),
             }
         } else {
-            return false;
+            false
         }
     }
 }
@@ -1503,7 +1677,7 @@ enum Severity {
     Info,
 }
 
-// #[derive(Default)]
+#[derive(Default)]
 struct State {
     page: Page,
     fsw: FSWState,
@@ -1512,45 +1686,43 @@ struct State {
     algoritham_option: Arc<Mutex<AlgorithamOption>>,
     key: Arc<Mutex<String>>,
 
-    // async_message_tx: Arc<watch::Sender<()>>,
-    // async_message_rx: watch::Receiver<()>,
     toasts: Arc<RwLock<Vec<Toast>>>,
 }
 
-impl Default for State {
-    fn default() -> Self {
-        // let (tx, rx) = watch::channel(());
+// impl Default for State {
+//     fn default() -> Self {
+//         // let (tx, rx) = watch::channel(());
 
-        Self {
-            page: Default::default(),
-            fsw: Default::default(),
-            manual: Default::default(),
-            tcp: Default::default(),
-            algoritham_option: Default::default(),
-            key: Default::default(),
-            toasts: Default::default(),
-            // toasts: vec![
-            //     Toast {
-            //         id: 1,
-            //         message: "1 Error: Failed to establish TCP connection to 192.168.1.10 on port 8080. Handshake timeout after 30 seconds. The server might be down, unreachable, or blocking the connection. Please check network settings. ".to_owned(),
-            //         severity: Severity::Error,
-            //     },
-            //     Toast {
-            //         id: 2,
-            //         message: "2 About to start encryption.".to_owned(),
-            //         severity: Severity::Info,
-            //     },
-            //     Toast {
-            //         id: 3,
-            //         message: "3 File succesfully sent.".to_owned(),
-            //         severity: Severity::Success,
-            //     },
-            // ],
-            // async_message_tx: Arc::new(tx),
-            // async_message_rx: rx,
-        }
-    }
-}
+//         Self {
+//             page: Default::default(),
+//             fsw: Default::default(),
+//             manual: Default::default(),
+//             tcp: Default::default(),
+//             algoritham_option: Default::default(),
+//             key: Default::default(),
+//             toasts: Default::default(),
+//             // toasts: vec![
+//             //     Toast {
+//             //         id: 1,
+//             //         message: "1 Error: Failed to establish TCP connection to 192.168.1.10 on port 8080. Handshake timeout after 30 seconds. The server might be down, unreachable, or blocking the connection. Please check network settings. ".to_owned(),
+//             //         severity: Severity::Error,
+//             //     },
+//             //     Toast {
+//             //         id: 2,
+//             //         message: "2 About to start encryption.".to_owned(),
+//             //         severity: Severity::Info,
+//             //     },
+//             //     Toast {
+//             //         id: 3,
+//             //         message: "3 File succesfully sent.".to_owned(),
+//             //         severity: Severity::Success,
+//             //     },
+//             // ],
+//             // async_message_tx: Arc::new(tx),
+//             // async_message_rx: rx,
+//         }
+//     }
+// }
 
 struct FSWState {
     from: Option<PathBuf>,
