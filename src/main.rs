@@ -1,4 +1,6 @@
 mod hash;
+use iced::futures::sink::SinkExt;
+use iced::stream;
 
 use iced::{
     alignment,
@@ -6,10 +8,11 @@ use iced::{
         button, column, container, horizontal_rule, horizontal_space, opaque, pick_list, row,
         scrollable, stack, svg, text, text_input, toggler, vertical_space, Column, Row,
     },
-    Alignment, Background, Border, Color, Element, Length, Shadow, Size, Task, Theme,
+    Alignment, Background, Border, Color, Element, Length, Shadow, Size, Subscription, Task, Theme,
 };
-use notify::{recommended_watcher, Error, RecursiveMode, Watcher};
+use notify::{recommended_watcher, RecursiveMode, Watcher};
 use rfd::AsyncFileDialog;
+use std::time::{Duration, SystemTime};
 use std::{
     fmt::Display,
     path::PathBuf,
@@ -18,7 +21,7 @@ use std::{
 
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
-    sync::mpsc,
+    // sync::watch
 };
 use tokio::{
     net::{TcpListener, TcpStream},
@@ -62,7 +65,7 @@ async fn process_file(
     op: Operation,
     key: String,
     dest_dir: &PathBuf,
-) -> Result<(), Error> {
+) -> Result<(), std::io::Error> {
     let mut file_handle = tokio::fs::OpenOptions::new().read(true).open(&file).await?;
 
     let file_content = {
@@ -100,6 +103,7 @@ async fn main() -> std::result::Result<(), iced::Error> {
         .window(window_settings)
         .window_size(Size::new(600.0, 400.0))
         .centered()
+        .subscription(State::subscription)
         .run()
 }
 
@@ -352,7 +356,7 @@ impl State {
                     let key = self.key.clone();
                     let operation = self.fsw.mode.to_owned();
 
-                    let (event_tx, mut event_rx) = mpsc::channel(10);
+                    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(10);
 
                     let mut watcher = recommended_watcher(move |res| {
                             match res {
@@ -369,6 +373,7 @@ impl State {
 
                     self.fsw.watcher = Some(Box::new(watcher));
 
+                    let toasts = self.toasts.clone();
                     tokio::spawn(async move {
                         while let Some(event) = event_rx.recv().await {
                             if !matches!(event.kind, notify::EventKind::Create(_)) {
@@ -383,10 +388,26 @@ impl State {
                             let key = key.lock().unwrap().to_owned();
 
                             let dest_dir = dest_dir.clone();
+
+                            let toasts = toasts.clone();
                             tokio::spawn(async move {
-                                process_file(&file_path, alg, operation, key, &dest_dir)
-                                    .await
-                                    .unwrap();
+                                match process_file(&file_path, alg, operation, key, &dest_dir).await
+                                {
+                                    Ok(_) => {
+                                        push_toast(
+                                            toasts,
+                                            "Successfully processed file",
+                                            Severity::Success,
+                                        );
+                                    }
+                                    Err(err) => {
+                                        let s = format!(
+                                            "There was an error processing the file: {:?}",
+                                            err
+                                        );
+                                        push_toast(toasts, &s, Severity::Error);
+                                    }
+                                }
                             });
                         }
                     });
@@ -891,26 +912,63 @@ impl State {
             Message::DeleteToast(id) => {
                 let index = self
                     .toasts
+                    .read()
+                    .unwrap()
                     .iter()
                     .position(|val| val.id == id)
                     .expect("Bug!!! Expect a valid id to be passed");
 
-                self.toasts.remove(index);
+                self.toasts.write().unwrap().remove(index);
 
                 Task::none()
             }
             Message::Empty => {
-                match self.errors.try_write() {
-                    Ok(mut guard) => {
-                        guard.push(String::from("New error"));
-                    }
-                    Err(err) => println!("err, {:?}", err),
+                let unfiltered = self.toasts.read().unwrap();
+                let unfiltered_len = unfiltered.len();
+
+                let filtered: Vec<Toast> = unfiltered
+                    .iter()
+                    .filter(|toast| !toast.expired())
+                    .cloned()
+                    .collect();
+                let filtered_len = filtered.len();
+
+                drop(unfiltered);
+
+                if filtered_len != unfiltered_len {
+                    let mut ts = self.toasts.write().unwrap();
+                    ts.clear();
+                    ts.extend(filtered);
                 }
-                //
+
                 Task::none()
             }
         }
     }
+    fn subscription(&self) -> Subscription<Message> {
+        Subscription::run(|| {
+            stream::channel(100, |mut output| async move {
+                output.send(()).await.unwrap();
+                loop {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    output.send(()).await.unwrap();
+                }
+            })
+        })
+        .map(|_| Message::Empty)
+    }
+}
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+fn push_toast(toasts: Arc<RwLock<Vec<Toast>>>, message: &str, severity: Severity) {
+    toasts.write().unwrap().push(Toast {
+        id: COUNTER.fetch_add(1, Ordering::Relaxed),
+        message: message.to_owned(),
+        severity: severity,
+        timestamp: SystemTime::now(),
+    });
 }
 
 async fn get_file_path() -> Option<PathBuf> {
@@ -1326,11 +1384,15 @@ fn settings_page(state: &State) -> Element<Message> {
 }
 
 fn toasts(state: &State) -> Element<Message> {
-    let toasts = state
+    let toasts: Vec<Element<Message>> = state
         .toasts
-        .iter()
+        .read()
+        .unwrap()
+        .clone()
+        .into_iter()
         .rev()
-        .map(|toast| toast_widget(&toast).into());
+        .map(|toast| -> Element<Message> { toast_widget(toast).into() })
+        .collect();
 
     scrollable(
         Column::new()
@@ -1364,12 +1426,13 @@ fn toasts(state: &State) -> Element<Message> {
     .into()
 }
 
-fn toast_widget(toast: &Toast) -> Element<Message> {
+fn toast_widget(toast: Toast) -> Element<'static, Message> {
     let severity = toast.severity.clone();
+    let message = format!("id: {}, {}", toast.id, toast.message);
 
     opaque(
         container(row![
-            container(text(&toast.message)).width(Length::Fill),
+            container(text(message)).width(Length::Fill),
             horizontal_space().width(10),
             button(
                 svg(svg::Handle::from_path(PathBuf::from("./assets/close.svg")))
@@ -1408,10 +1471,29 @@ fn get_toast_style(theme: &Theme, severity: Severity) -> container::Style {
         .border(Border::default().rounded(10.0))
 }
 
+#[derive(Clone)]
 struct Toast {
-    id: u32,
+    id: usize,
     message: String,
     severity: Severity,
+    timestamp: SystemTime,
+}
+
+const SHORT_TOAST_DURATION: Duration = Duration::from_secs(1);
+const LONG_TOAST_DURATION: Duration = Duration::from_secs(5);
+
+impl Toast {
+    fn expired(&self) -> bool {
+        if let Ok(duration) = self.timestamp.elapsed() {
+            match self.severity {
+                Severity::Success => duration.ge(&SHORT_TOAST_DURATION),
+                Severity::Error => duration.ge(&LONG_TOAST_DURATION),
+                Severity::Info => duration.ge(&SHORT_TOAST_DURATION),
+            }
+        } else {
+            return false;
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1430,13 +1512,15 @@ struct State {
     algoritham_option: Arc<Mutex<AlgorithamOption>>,
     key: Arc<Mutex<String>>,
 
-    errors: Arc<RwLock<Vec<String>>>,
-
-    toasts: Vec<Toast>,
+    // async_message_tx: Arc<watch::Sender<()>>,
+    // async_message_rx: watch::Receiver<()>,
+    toasts: Arc<RwLock<Vec<Toast>>>,
 }
 
 impl Default for State {
     fn default() -> Self {
+        // let (tx, rx) = watch::channel(());
+
         Self {
             page: Default::default(),
             fsw: Default::default(),
@@ -1444,44 +1528,26 @@ impl Default for State {
             tcp: Default::default(),
             algoritham_option: Default::default(),
             key: Default::default(),
-            errors: Default::default(),
-            toasts: vec![
-                Toast {
-                    id: 1,
-                    message: "1 Error: Failed to establish TCP connection to 192.168.1.10 on port 8080. Handshake timeout after 30 seconds. The server might be down, unreachable, or blocking the connection. Please check network settings. ".to_owned(),
-                    severity: Severity::Error,
-                },
-                Toast {
-                    id: 2,
-                    message: "2 About to start encryption.".to_owned(),
-                    severity: Severity::Info,
-                },
-                Toast {
-                    id: 3,
-                    message: "3 File succesfully sent.".to_owned(),
-                    severity: Severity::Success,
-                },
-                // Toast {
-                //     id: 4,
-                //     message: "4 Error: Failed to establish TCP connection to 192.168.1.10 on port 8080. Handshake timeout after 30 seconds. The server might be down, unreachable, or blocking the connection. Please check network settings. ".to_owned(),
-                //     severity: Severity::Error,
-                // },
-                // Toast {
-                //     id: 5,
-                //     message: "5 About to start encryption.".to_owned(),
-                //     severity: Severity::Info,
-                // },
-                // Toast {
-                //     id: 6,
-                //     message: "6 File succesfully sent.".to_owned(),
-                //     severity: Severity::Success,
-                // },
-                // Toast {
-                //     id: 7,
-                //     message: "7 Error: Failed to establish TCP connection to 192.168.1.10 on port 8080. Handshake timeout after 30 seconds. The server might be down, unreachable, or blocking the connection. Please check network settings. ".to_owned(),
-                //     severity: Severity::Success,
-                // }
-            ]
+            toasts: Default::default(),
+            // toasts: vec![
+            //     Toast {
+            //         id: 1,
+            //         message: "1 Error: Failed to establish TCP connection to 192.168.1.10 on port 8080. Handshake timeout after 30 seconds. The server might be down, unreachable, or blocking the connection. Please check network settings. ".to_owned(),
+            //         severity: Severity::Error,
+            //     },
+            //     Toast {
+            //         id: 2,
+            //         message: "2 About to start encryption.".to_owned(),
+            //         severity: Severity::Info,
+            //     },
+            //     Toast {
+            //         id: 3,
+            //         message: "3 File succesfully sent.".to_owned(),
+            //         severity: Severity::Success,
+            //     },
+            // ],
+            // async_message_tx: Arc::new(tx),
+            // async_message_rx: rx,
         }
     }
 }
@@ -1594,7 +1660,7 @@ pub enum Message {
     Tcp(TcpPageMessage),
     AlgorithamChanged(AlgorithamOption),
     KeyChanged(String),
-    DeleteToast(u32),
+    DeleteToast(usize),
     Empty,
 }
 
