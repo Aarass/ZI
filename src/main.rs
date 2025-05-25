@@ -1,4 +1,7 @@
+mod algorithms;
 mod hash;
+use algorithms::enigma::alg::Enigma;
+
 use iced::futures::sink::SinkExt;
 use iced::stream;
 
@@ -62,7 +65,7 @@ fn get_new_file_path(file: &Path, dest_dir: &Path, op: Operation) -> PathBuf {
 
 async fn process_file(
     file: &PathBuf,
-    alg: Box<dyn Algoritham + Send>,
+    alg: Box<dyn Algorithm + Send>,
     op: Operation,
     key: String,
     dest_dir: &Path,
@@ -108,27 +111,14 @@ async fn main() -> std::result::Result<(), iced::Error> {
         .run()
 }
 
-trait Algoritham {
+trait Algorithm {
     fn encrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>>;
     fn decrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>>;
 }
 
-struct Enigma {}
-impl Algoritham for Enigma {
-    fn encrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>> {
-        let _ = key;
-        Ok(data.to_owned())
-    }
-
-    fn decrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>> {
-        let _ = key;
-        Ok(data.to_owned())
-    }
-}
-
 #[allow(clippy::upper_case_acronyms)]
 struct XXTEA {}
-impl Algoritham for XXTEA {
+impl Algorithm for XXTEA {
     fn encrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>> {
         let _ = key;
         Ok(data.to_owned())
@@ -143,7 +133,7 @@ impl Algoritham for XXTEA {
 use magic_crypt::{new_magic_crypt, MagicCryptTrait};
 
 struct Magic {}
-impl Algoritham for Magic {
+impl Algorithm for Magic {
     fn encrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>> {
         let mc = new_magic_crypt!(&key, 256);
         Ok(mc.encrypt_bytes_to_bytes(data))
@@ -155,12 +145,12 @@ impl Algoritham for Magic {
     }
 }
 
-fn get_algoritham(alg: &Arc<Mutex<AlgorithamOption>>) -> Box<dyn Algoritham + Send> {
+fn get_algorithm(alg: &Arc<Mutex<AlgorithmOption>>) -> Box<dyn Algorithm + Send> {
     let option = alg.lock().unwrap().to_owned();
     match option {
-        AlgorithamOption::Enigma => Box::new(Enigma {}),
-        AlgorithamOption::XXTEA => Box::new(XXTEA {}),
-        AlgorithamOption::Magic => Box::new(Magic {}),
+        AlgorithmOption::Enigma => Box::new(Enigma {}),
+        AlgorithmOption::XXTEA => Box::new(XXTEA {}),
+        AlgorithmOption::Magic => Box::new(Magic {}),
     }
 }
 
@@ -368,7 +358,7 @@ impl State {
                         return Task::none();
                     };
 
-                    let algoritham_option = self.algoritham_option.clone();
+                    let algorithm_option = self.algorithm_option.clone();
                     let key = self.key.clone();
                     let operation = self.fsw.mode.to_owned();
 
@@ -409,7 +399,7 @@ impl State {
                                 }
                             }
 
-                            let alg = get_algoritham(&algoritham_option);
+                            let alg = get_algorithm(&algorithm_option);
                             let key = key.lock().unwrap().to_owned();
 
                             let dest_dir = dest_dir.clone();
@@ -494,7 +484,7 @@ impl State {
                 ManualPageMessage::StartEncryption => {
                     self.manual.is_doing_work = true;
 
-                    let alg = get_algoritham(&self.algoritham_option);
+                    let alg = get_algorithm(&self.algorithm_option);
                     let key = self.key.lock().unwrap().to_owned();
 
                     let file_path = self
@@ -538,7 +528,7 @@ impl State {
                 ManualPageMessage::StartDecryption => {
                     self.manual.is_doing_work = true;
 
-                    let alg = get_algoritham(&self.algoritham_option);
+                    let alg = get_algorithm(&self.algorithm_option);
                     let key = self.key.lock().unwrap().to_owned();
 
                     let file_path = self
@@ -647,7 +637,7 @@ impl State {
                         }
                     };
 
-                    let alg = get_algoritham(&self.algoritham_option);
+                    let alg = get_algorithm(&self.algorithm_option);
                     let key = self.key.clone().lock().unwrap().to_owned();
 
                     self.tcp.is_sending = true;
@@ -881,7 +871,7 @@ impl State {
                         .my_port
                         .expect("My port is none when trying to start tcp server");
 
-                    let algoritham_option = self.algoritham_option.clone();
+                    let algorithm_option = self.algorithm_option.clone();
                     let key = self.key.clone();
 
                     let handle = tokio::spawn(async move {
@@ -913,7 +903,7 @@ impl State {
                             println!("{}", message);
                             push_toast(&toasts, &message, Severity::Info);
 
-                            let algoritham_option = algoritham_option.clone();
+                            let algorithm_option = algorithm_option.clone();
                             let key = key.clone();
 
                             let toasts = toasts.clone();
@@ -1079,7 +1069,7 @@ impl State {
                                     String::from_utf8_lossy(&encrypted_content)
                                 );
 
-                                let alg = get_algoritham(&algoritham_option);
+                                let alg = get_algorithm(&algorithm_option);
                                 let key = key.lock().unwrap().to_owned();
 
                                 let decrypted_file_content =
@@ -1122,8 +1112,8 @@ impl State {
                     Task::none()
                 }
             },
-            Message::AlgorithamChanged(new_option) => {
-                match self.algoritham_option.lock() {
+            Message::AlgorithmChanged(new_option) => {
+                match self.algorithm_option.lock() {
                     Ok(mut option) => {
                         *option = new_option;
                     }
@@ -1561,22 +1551,22 @@ fn tcp_recieve_widget(state: &State) -> Element<Message> {
 }
 
 #[derive(Clone, PartialEq, Default, Debug)]
-pub enum AlgorithamOption {
+pub enum AlgorithmOption {
     #[default]
     Magic,
     Enigma,
     XXTEA,
 }
 
-impl Display for AlgorithamOption {
+impl Display for AlgorithmOption {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
             "{}",
             match self {
-                AlgorithamOption::Magic => "Magic",
-                AlgorithamOption::Enigma => "Enigma",
-                AlgorithamOption::XXTEA => "XXTEA",
+                AlgorithmOption::Magic => "Magic",
+                AlgorithmOption::Enigma => "Enigma",
+                AlgorithmOption::XXTEA => "XXTEA",
             }
         )
     }
@@ -1590,7 +1580,7 @@ fn settings_page(state: &State) -> Element<Message> {
         .unwrap_or(String::from("Error"));
 
     let option = state
-        .algoritham_option
+        .algorithm_option
         .lock()
         .map(|guard| guard.to_owned())
         .unwrap_or_default();
@@ -1601,15 +1591,15 @@ fn settings_page(state: &State) -> Element<Message> {
             .width(Length::Fill),
         vertical_space().height(10),
         row![
-            text("Encryption/decryption algoritham: "),
+            text("Encryption/decryption algorithm: "),
             pick_list(
                 vec![
-                    AlgorithamOption::Magic,
-                    AlgorithamOption::Enigma,
-                    AlgorithamOption::XXTEA
+                    AlgorithmOption::Magic,
+                    AlgorithmOption::Enigma,
+                    AlgorithmOption::XXTEA
                 ],
                 Some(option.clone()),
-                Message::AlgorithamChanged
+                Message::AlgorithmChanged
             ),
         ]
         .align_y(alignment::Vertical::Center)
@@ -1744,7 +1734,7 @@ struct State {
     fsw: FSWState,
     manual: ManualState,
     tcp: TcpState,
-    algoritham_option: Arc<Mutex<AlgorithamOption>>,
+    algorithm_option: Arc<Mutex<AlgorithmOption>>,
     key: Arc<Mutex<String>>,
 
     toasts: Arc<RwLock<Vec<Toast>>>,
@@ -1891,7 +1881,7 @@ pub enum Message {
     FSW(FSWPageMessage),
     Manual(ManualPageMessage),
     Tcp(TcpPageMessage),
-    AlgorithamChanged(AlgorithamOption),
+    AlgorithmChanged(AlgorithmOption),
     KeyChanged(String),
     DeleteToast(usize),
     Tick,
