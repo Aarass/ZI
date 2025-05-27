@@ -7,7 +7,6 @@ use crate::{
 };
 
 #[test]
-#[ignore]
 fn test_alg() {
     let input: Vec<u8> = "Hello asdjfk df asdf asd"
         .chars()

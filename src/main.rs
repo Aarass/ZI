@@ -2,6 +2,7 @@ mod algorithms;
 mod hash;
 use algorithms::enigma::alg::Enigma;
 
+use algorithms::xxtea::alg::XXTEA;
 use iced::futures::sink::SinkExt;
 use iced::stream;
 
@@ -114,20 +115,6 @@ async fn main() -> std::result::Result<(), iced::Error> {
 trait Algorithm {
     fn encrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>>;
     fn decrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>>;
-}
-
-#[allow(clippy::upper_case_acronyms)]
-struct XXTEA {}
-impl Algorithm for XXTEA {
-    fn encrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>> {
-        let _ = key;
-        Ok(data.to_owned())
-    }
-
-    fn decrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>> {
-        let _ = key;
-        Ok(data.to_owned())
-    }
 }
 
 use magic_crypt::{new_magic_crypt, MagicCryptTrait};
