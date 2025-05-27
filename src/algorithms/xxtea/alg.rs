@@ -24,24 +24,79 @@ impl Algorithm for XXTEA {
 #[allow(clippy::upper_case_acronyms)]
 pub struct XXTEA_CFB {}
 
-const BLOCK_SIZE: u32 = 8;
-const IV: &str = "SuperSecretInitVector";
+const BLOCK_SIZE: usize = 8;
+const IV: [u8; 10] = [0u8; 10];
 
 impl Algorithm for XXTEA_CFB {
     fn encrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>> {
         let key = key.as_bytes();
 
-        let res = to_bytes(&encrypt_(to_u32(&data, true), &to_u32(&key, false)), false);
+        let mut res = Vec::with_capacity(data.len());
+
+        let mut prev = IV[0..BLOCK_SIZE].to_vec();
+
+        for plainblock in data.chunks(BLOCK_SIZE) {
+            let intermidiate =
+                to_bytes(&encrypt_(to_u32(&prev, false), &to_u32(&key, false)), false);
+
+            assert_eq!(intermidiate.len(), BLOCK_SIZE);
+
+            let ciphertext: Vec<u8> = plainblock
+                .iter()
+                .zip(intermidiate)
+                .map(|(a, b)| a ^ b)
+                .collect();
+
+            res.extend(ciphertext.iter());
+            prev = ciphertext;
+        }
 
         Ok(res)
     }
 
     fn decrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>> {
         let key = key.as_bytes();
-        let res = to_bytes(&decrypt_(to_u32(&data, false), &to_u32(&key, false)), true);
+
+        let mut res = Vec::with_capacity(data.len());
+
+        let mut prev = IV[0..BLOCK_SIZE].to_vec();
+
+        for cipherblock in data.chunks(BLOCK_SIZE) {
+            let intermidiate =
+                to_bytes(&encrypt_(to_u32(&prev, false), &to_u32(&key, false)), false);
+
+            assert_eq!(intermidiate.len(), BLOCK_SIZE);
+
+            let plaintext: Vec<u8> = cipherblock
+                .iter()
+                .zip(intermidiate)
+                .map(|(a, b)| a ^ b)
+                .collect();
+
+            res.extend(plaintext.iter());
+            prev = cipherblock.to_vec();
+        }
 
         Ok(res)
     }
+}
+
+#[test]
+fn cfb() {
+    let alg = XXTEA_CFB {};
+
+    let data = "Hellouw there".as_bytes();
+    let key: &str = "SecretKey";
+
+    let encrypted = alg.encrypt(data, key.to_owned()).unwrap();
+
+    println!("Encrypted data: {:?}", encrypted);
+    println!("Encrypted data: {:?}", String::from_utf8_lossy(&encrypted));
+
+    let decrypted = alg.decrypt(&encrypted, key.to_owned()).unwrap();
+
+    println!("Decrypted data: {:?}", decrypted);
+    println!("Decrypted data: {:?}", String::from_utf8_lossy(&decrypted));
 }
 
 fn encrypt_(mut v: Vec<u32>, k: &[u32]) -> Vec<u32> {
@@ -235,6 +290,10 @@ fn xxtea_3() {
 
     let encrypted_data = encrypt(&data.as_bytes(), key);
     println!("Encrypted data: {:?}", encrypted_data);
+    println!(
+        "Encrypted data: {:?}",
+        String::from_utf8_lossy(&encrypted_data)
+    );
 
     let decrypted_data = decrypt(&encrypted_data, key);
     println!("Decrypted data: {:?}", decrypted_data);
