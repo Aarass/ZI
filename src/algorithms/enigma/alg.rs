@@ -9,6 +9,7 @@ use super::{
     rotor_assembly::RotorAssembly,
     utils::{self, to_u8_array_26},
 };
+
 pub struct Enigma {}
 
 impl Algorithm for Enigma {

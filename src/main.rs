@@ -2,7 +2,7 @@ mod algorithms;
 mod hash;
 use algorithms::enigma::alg::Enigma;
 
-use algorithms::xxtea::alg::XXTEA;
+use algorithms::xxtea::alg::{XXTEA, XXTEA_CFB};
 use iced::futures::sink::SinkExt;
 use iced::stream;
 
@@ -117,27 +117,12 @@ trait Algorithm {
     fn decrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>>;
 }
 
-use magic_crypt::{new_magic_crypt, MagicCryptTrait};
-
-struct Magic {}
-impl Algorithm for Magic {
-    fn encrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>> {
-        let mc = new_magic_crypt!(&key, 256);
-        Ok(mc.encrypt_bytes_to_bytes(data))
-    }
-
-    fn decrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>> {
-        let mc = new_magic_crypt!(&key, 256);
-        Ok(mc.decrypt_bytes_to_bytes(data)?)
-    }
-}
-
 fn get_algorithm(alg: &Arc<Mutex<AlgorithmOption>>) -> Box<dyn Algorithm + Send> {
     let option = alg.lock().unwrap().to_owned();
     match option {
         AlgorithmOption::Enigma => Box::new(Enigma {}),
         AlgorithmOption::XXTEA => Box::new(XXTEA {}),
-        AlgorithmOption::Magic => Box::new(Magic {}),
+        AlgorithmOption::XXTEA_CFB => Box::new(XXTEA_CFB {}),
     }
 }
 
@@ -239,7 +224,7 @@ impl State {
                //     style
                // }),
         ]
-        .spacing(5);
+        .spacing(1);
 
         let page: Element<Message> = match self.page {
             Page::Fsw => fsw_page(self),
@@ -1540,9 +1525,9 @@ fn tcp_recieve_widget(state: &State) -> Element<Message> {
 #[derive(Clone, PartialEq, Default, Debug)]
 pub enum AlgorithmOption {
     #[default]
-    Magic,
     Enigma,
     XXTEA,
+    XXTEA_CFB,
 }
 
 impl Display for AlgorithmOption {
@@ -1551,9 +1536,9 @@ impl Display for AlgorithmOption {
             f,
             "{}",
             match self {
-                AlgorithmOption::Magic => "Magic",
                 AlgorithmOption::Enigma => "Enigma",
                 AlgorithmOption::XXTEA => "XXTEA",
+                AlgorithmOption::XXTEA_CFB => "XXTEA CFB",
             }
         )
     }
@@ -1572,27 +1557,108 @@ fn settings_page(state: &State) -> Element<Message> {
         .map(|guard| guard.to_owned())
         .unwrap_or_default();
 
+    let args: Element<Message> = match option {
+        AlgorithmOption::Enigma => enigma_settings(),
+        AlgorithmOption::XXTEA => xxtea_settings(),
+        AlgorithmOption::XXTEA_CFB => xxtea_cfb_settings(),
+    };
+
     column![
-        text_input("Key", &key)
-            .on_input(Message::KeyChanged)
-            .width(Length::Fill),
-        vertical_space().height(10),
+        vertical_space().height(30),
         row![
-            text("Encryption/decryption algorithm: "),
+            text("Algorithm: "),
             pick_list(
                 vec![
-                    AlgorithmOption::Magic,
                     AlgorithmOption::Enigma,
-                    AlgorithmOption::XXTEA
+                    AlgorithmOption::XXTEA,
+                    AlgorithmOption::XXTEA_CFB
                 ],
                 Some(option.clone()),
                 Message::AlgorithmChanged
             ),
         ]
-        .align_y(alignment::Vertical::Center)
+        .align_y(Alignment::Center),
+        container(column![args])
+            .center_y(Length::Fill)
+            .padding([0, 50])
     ]
-    .padding([50, 100])
+    .height(Length::Fill)
     .align_x(alignment::Horizontal::Center)
+    .into()
+}
+
+fn enigma_settings<'a>() -> Element<'a, Message> {
+    let tmp = "";
+    column![
+        row![
+            column![
+                text("Reflector")
+                    .width(Length::Fill)
+                    .align_x(Alignment::Center),
+                text_input("Wiring", tmp).width(Length::Fill)
+            ]
+            .spacing(5),
+            column![
+                text("Rotor 1")
+                    .width(Length::Fill)
+                    .align_x(Alignment::Center),
+                text_input("Wiring", tmp).width(Length::Fill),
+                row![text_input("Notch", tmp), text_input("Position", tmp),].spacing(5)
+            ]
+            .spacing(5),
+            column![
+                text("Rotor 2")
+                    .width(Length::Fill)
+                    .align_x(Alignment::Center),
+                text_input("Wiring", tmp).width(Length::Fill),
+                row![text_input("Notch", tmp), text_input("Position", tmp),].spacing(5)
+            ]
+            .spacing(5),
+            column![
+                text("Rotor 3")
+                    .width(Length::Fill)
+                    .align_x(Alignment::Center),
+                text_input("Wiring", tmp).width(Length::Fill),
+                row![text_input("Notch", tmp), text_input("Position", tmp),].spacing(5)
+            ]
+            .spacing(5),
+        ]
+        .spacing(10),
+        vertical_space().height(30),
+        column![
+            text("Plugboard")
+                .width(Length::Fill)
+                .align_x(Alignment::Center),
+            text_input("Pairs", tmp).width(Length::Fill),
+        ]
+        .width(300)
+        .spacing(5)
+    ]
+    .align_x(Alignment::Center)
+    .into()
+}
+
+fn xxtea_settings<'a>() -> Element<'a, Message> {
+    let key = "";
+
+    column![text_input("Key", &key)
+        .on_input(Message::KeyChanged)
+        .width(Length::Fill),]
+    .into()
+}
+
+fn xxtea_cfb_settings<'a>() -> Element<'a, Message> {
+    let key = "";
+
+    column![
+        text_input("IV", &key)
+            .on_input(Message::KeyChanged)
+            .width(Length::Fill),
+        vertical_space().height(10),
+        text_input("Key", &key)
+            .on_input(Message::KeyChanged)
+            .width(Length::Fill),
+    ]
     .into()
 }
 
@@ -1844,6 +1910,15 @@ impl Default for TcpState {
             join_handle: Default::default(),
         }
     }
+}
+
+struct SettingsState {
+    from: Option<PathBuf>,
+    to: Option<PathBuf>,
+    mode: Operation,
+    is_on: bool,
+
+    watcher: Option<Box<dyn Watcher + Send>>,
 }
 
 #[derive(Default)]
