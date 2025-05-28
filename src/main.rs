@@ -16,6 +16,7 @@ use iced::{
 };
 use notify::{recommended_watcher, RecursiveMode, Watcher};
 use rfd::AsyncFileDialog;
+use std::ops::Deref;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 use std::{
@@ -64,9 +65,9 @@ fn get_new_file_path(file: &Path, dest_dir: &Path, op: Operation) -> PathBuf {
     tmp
 }
 
-async fn process_file(
+async fn process_file<T: Algorithm + ?Sized>(
     file: &PathBuf,
-    alg: Box<dyn Algorithm + Send>,
+    alg: &Box<T>,
     op: Operation,
     key: String,
     dest_dir: &Path,
@@ -117,8 +118,7 @@ trait Algorithm {
     fn decrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>>;
 }
 
-fn get_algorithm(alg: &Arc<Mutex<AlgorithmOption>>) -> Box<dyn Algorithm + Send> {
-    let option = alg.lock().unwrap().to_owned();
+fn get_algorithm(option: AlgorithmOption) -> Box<dyn Algorithm + Send + Sync> {
     match option {
         AlgorithmOption::Enigma => Box::new(Enigma {}),
         AlgorithmOption::XXTEA => Box::new(XXTEA {}),
@@ -128,7 +128,7 @@ fn get_algorithm(alg: &Arc<Mutex<AlgorithmOption>>) -> Box<dyn Algorithm + Send>
 
 impl State {
     pub fn view(&self) -> Element<Message> {
-        let tab_radius = 20.0;
+        let tab_radius = 10.0;
         let navigation: Row<Message> = row![
             horizontal_space().width(10),
             button(text("FS Watcher").align_x(alignment::Horizontal::Center))
@@ -323,27 +323,26 @@ impl State {
                     } {
                         eprintln!("Source and destination directory are the same. This would create an infinite loop.");
                         push_toast(
-                            &self.toasts,
-                            "Source and destination directory are the same. This would create an infinite loop.",
-                            Severity::Error,
-                        );
+                                    &self.toasts,
+                                    "Source and destination directory are the same. This would create an infinite loop.",
+                                    Severity::Error,
+                                );
                         return Task::none();
                     };
 
-                    let algorithm_option = self.algorithm_option.clone();
                     let key = self.key.clone();
                     let operation = self.fsw.mode.to_owned();
 
                     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(10);
 
                     let mut watcher = recommended_watcher(move |res| {
-                            match res {
-                                Ok(event) => {
-                                    event_tx.blocking_send(event).expect("Send error. A send operation can only fail if the receiving end of a channel is disconnected, implying that the data could never be received. The error contains the data being sent as a payload so it can be recovered.")
-                                },
-                                Err(e) => println!("Event handler recieved error: {:?}", e),
-                            }
-                        }).expect("Couldn't create watcher");
+                                    match res {
+                                        Ok(event) => {
+                                            event_tx.blocking_send(event).expect("Send error. A send operation can only fail if the receiving end of a channel is disconnected, implying that the data could never be received. The error contains the data being sent as a payload so it can be recovered.")
+                                        },
+                                        Err(e) => println!("Event handler recieved error: {:?}", e),
+                                    }
+                                }).expect("Couldn't create watcher");
 
                     watcher
                         .watch(&dir_to_watch, RecursiveMode::NonRecursive)
@@ -352,6 +351,8 @@ impl State {
                     self.fsw.watcher = Some(Box::new(watcher));
 
                     let toasts = self.toasts.clone();
+
+                    let alg = Arc::new(get_algorithm(self.settings.algorithm_option));
                     tokio::spawn(async move {
                         while let Some(event) = event_rx.recv().await {
                             if !matches!(event.kind, notify::EventKind::Create(_)) {
@@ -371,14 +372,22 @@ impl State {
                                 }
                             }
 
-                            let alg = get_algorithm(&algorithm_option);
                             let key = key.lock().unwrap().to_owned();
 
                             let dest_dir = dest_dir.clone();
 
+                            let alg = alg.clone();
                             let toasts = toasts.clone();
+
                             tokio::spawn(async move {
-                                match process_file(&file_path, alg, operation, key, &dest_dir).await
+                                match process_file(
+                                    &file_path,
+                                    &alg.deref(),
+                                    operation,
+                                    key,
+                                    &dest_dir,
+                                )
+                                .await
                                 {
                                     Ok(_) => {
                                         push_toast(
@@ -456,7 +465,7 @@ impl State {
                 ManualPageMessage::StartEncryption => {
                     self.manual.is_doing_work = true;
 
-                    let alg = get_algorithm(&self.algorithm_option);
+                    let alg = get_algorithm(self.settings.algorithm_option);
                     let key = self.key.lock().unwrap().to_owned();
 
                     let file_path = self
@@ -467,11 +476,18 @@ impl State {
 
                     let dest_dir = self.manual.to.to_owned().expect("UI should not allow this");
 
+                    let alg = Arc::new(alg);
                     let toasts = self.toasts.clone();
                     Task::perform(
                         async move {
-                            match process_file(&file_path, alg, Operation::Encrypt, key, &dest_dir)
-                                .await
+                            match process_file(
+                                &file_path,
+                                &alg.deref(),
+                                Operation::Encrypt,
+                                key,
+                                &dest_dir,
+                            )
+                            .await
                             {
                                 Ok(_) => {
                                     push_toast(
@@ -500,7 +516,7 @@ impl State {
                 ManualPageMessage::StartDecryption => {
                     self.manual.is_doing_work = true;
 
-                    let alg = get_algorithm(&self.algorithm_option);
+                    let alg = get_algorithm(self.settings.algorithm_option);
                     let key = self.key.lock().unwrap().to_owned();
 
                     let file_path = self
@@ -510,11 +526,19 @@ impl State {
                         .expect("UI should not allow this");
 
                     let dest_dir = self.manual.to.to_owned().expect("UI should not allow this");
+
+                    let alg = Arc::new(alg);
                     let toasts = self.toasts.clone();
                     Task::perform(
                         async move {
-                            match process_file(&file_path, alg, Operation::Decrypt, key, &dest_dir)
-                                .await
+                            match process_file(
+                                &file_path,
+                                &alg.deref(),
+                                Operation::Decrypt,
+                                key,
+                                &dest_dir,
+                            )
+                            .await
                             {
                                 Ok(_) => {
                                     push_toast(
@@ -609,7 +633,7 @@ impl State {
                         }
                     };
 
-                    let alg = get_algorithm(&self.algorithm_option);
+                    let alg = get_algorithm(self.settings.algorithm_option);
                     let key = self.key.clone().lock().unwrap().to_owned();
 
                     self.tcp.is_sending = true;
@@ -787,9 +811,9 @@ impl State {
                                         }
                                         Err(err) => {
                                             eprintln!(
-                                                "An error occurred while closing the connection: {:?}",
-                                                err
-                                            );
+                                                        "An error occurred while closing the connection: {:?}",
+                                                        err
+                                                    );
                                             push_toast(
                                                 &toasts,
                                                 "An error occurred while closing the connection",
@@ -843,7 +867,7 @@ impl State {
                         .my_port
                         .expect("My port is none when trying to start tcp server");
 
-                    let algorithm_option = self.algorithm_option.clone();
+                    let alg = get_algorithm(self.settings.algorithm_option);
                     let key = self.key.clone();
 
                     let handle = tokio::spawn(async move {
@@ -861,6 +885,8 @@ impl State {
                             }
                         };
 
+                        let alg = Arc::new(alg);
+
                         loop {
                             let (socket, addr) = match listener.accept().await {
                                 Ok(val) => val,
@@ -875,10 +901,11 @@ impl State {
                             println!("{}", message);
                             push_toast(&toasts, &message, Severity::Info);
 
-                            let algorithm_option = algorithm_option.clone();
                             let key = key.clone();
 
                             let toasts = toasts.clone();
+
+                            let alg = alg.clone();
                             tokio::spawn(async move {
                                 let mut socket = BufReader::new(socket);
                                 match socket.fill_buf().await {
@@ -1041,7 +1068,6 @@ impl State {
                                     String::from_utf8_lossy(&encrypted_content)
                                 );
 
-                                let alg = get_algorithm(&algorithm_option);
                                 let key = key.lock().unwrap().to_owned();
 
                                 let decrypted_file_content =
@@ -1085,26 +1111,80 @@ impl State {
                 }
             },
             Message::AlgorithmChanged(new_option) => {
-                match self.algorithm_option.lock() {
-                    Ok(mut option) => {
-                        *option = new_option;
-                    }
-                    Err(err) => {
-                        println!("{:?}", err);
-                    }
-                };
+                self.settings.algorithm_option = new_option;
                 Task::none()
             }
-            Message::KeyChanged(new_key) => {
-                match self.key.lock() {
-                    Ok(mut key) => {
-                        *key = new_key;
+            Message::AlgorithmSettingsChanged(algorithm_settings_message) => {
+                match algorithm_settings_message {
+                    AlgorithmSettingsMessage::Enigma(enigma_settings_mesasge) => {
+                        match enigma_settings_mesasge {
+                            EnigmaSettingsMesasge::ReflWiringChanged(value) => {
+                                self.settings.enigma_args.refl_wiring = value;
+                                Task::none()
+                            }
+                            EnigmaSettingsMesasge::Rot1WiringChanged(value) => {
+                                self.settings.enigma_args.rot1_wiring = value;
+                                Task::none()
+                            }
+                            EnigmaSettingsMesasge::Rot1NotchChanged(value) => {
+                                self.settings.enigma_args.rot1_notch = value;
+                                Task::none()
+                            }
+                            EnigmaSettingsMesasge::Rot1PositionChanged(value) => {
+                                self.settings.enigma_args.rot1_position = value;
+                                Task::none()
+                            }
+                            EnigmaSettingsMesasge::Rot2WiringChanged(value) => {
+                                self.settings.enigma_args.rot2_wiring = value;
+                                Task::none()
+                            }
+                            EnigmaSettingsMesasge::Rot2NotchChanged(value) => {
+                                self.settings.enigma_args.rot2_notch = value;
+                                Task::none()
+                            }
+                            EnigmaSettingsMesasge::Rot2PositionChanged(value) => {
+                                self.settings.enigma_args.rot2_position = value;
+                                Task::none()
+                            }
+                            EnigmaSettingsMesasge::Rot3WiringChanged(value) => {
+                                self.settings.enigma_args.rot3_wiring = value;
+                                Task::none()
+                            }
+                            EnigmaSettingsMesasge::Rot3NotchChanged(value) => {
+                                self.settings.enigma_args.rot3_notch = value;
+                                Task::none()
+                            }
+                            EnigmaSettingsMesasge::Rot3PositionChanged(value) => {
+                                self.settings.enigma_args.rot3_position = value;
+                                Task::none()
+                            }
+                            EnigmaSettingsMesasge::PlugboardChanged(value) => {
+                                self.settings.enigma_args.plugboard = value;
+                                Task::none()
+                            }
+                        }
                     }
-                    Err(err) => {
-                        println!("{:?}", err);
+                    AlgorithmSettingsMessage::XXTEA(xxteasettings_mesasge) => {
+                        match xxteasettings_mesasge {
+                            XXTEASettingsMesasge::KeyChanged(value) => {
+                                self.settings.xxtea_args.key = value;
+                                Task::none()
+                            }
+                        }
                     }
-                };
-                Task::none()
+                    AlgorithmSettingsMessage::XXTEA_CFB(xxtea_cfbsettings_mesasge) => {
+                        match xxtea_cfbsettings_mesasge {
+                            XXTEA_CFBSettingsMesasge::KeyChanged(value) => {
+                                self.settings.xxtea_cfb_args.key = value;
+                                Task::none()
+                            }
+                            XXTEA_CFBSettingsMesasge::IVChanged(value) => {
+                                self.settings.xxtea_cfb_args.iv = value;
+                                Task::none()
+                            }
+                        }
+                    }
+                }
             }
             Message::DeleteToast(id) => {
                 let index = self
@@ -1156,6 +1236,18 @@ impl State {
         .map(|_| Message::Tick)
     }
 }
+
+// Message::KeyChanged(new_key) => {
+//     match self.key.lock() {
+//         Ok(mut key) => {
+//             *key = new_key;
+//         }
+//         Err(err) => {
+//             println!("{:?}", err);
+//         }
+//     };
+//     Task::none()
+// }
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -1522,7 +1614,7 @@ fn tcp_recieve_widget(state: &State) -> Element<Message> {
     .into()
 }
 
-#[derive(Clone, PartialEq, Default, Debug)]
+#[derive(Clone, Copy, PartialEq, Default, Debug)]
 pub enum AlgorithmOption {
     #[default]
     Enigma,
@@ -1545,22 +1637,12 @@ impl Display for AlgorithmOption {
 }
 
 fn settings_page(state: &State) -> Element<Message> {
-    let key = state
-        .key
-        .lock()
-        .map(|guard| guard.to_owned())
-        .unwrap_or(String::from("Error"));
-
-    let option = state
-        .algorithm_option
-        .lock()
-        .map(|guard| guard.to_owned())
-        .unwrap_or_default();
+    let option = state.settings.algorithm_option.clone();
 
     let args: Element<Message> = match option {
-        AlgorithmOption::Enigma => enigma_settings(),
-        AlgorithmOption::XXTEA => xxtea_settings(),
-        AlgorithmOption::XXTEA_CFB => xxtea_cfb_settings(),
+        AlgorithmOption::Enigma => enigma_settings(&state.settings.enigma_args),
+        AlgorithmOption::XXTEA => xxtea_settings(&state.settings.xxtea_args),
+        AlgorithmOption::XXTEA_CFB => xxtea_cfb_settings(&state.settings.xxtea_cfb_args),
     };
 
     column![
@@ -1573,7 +1655,7 @@ fn settings_page(state: &State) -> Element<Message> {
                     AlgorithmOption::XXTEA,
                     AlgorithmOption::XXTEA_CFB
                 ],
-                Some(option.clone()),
+                Some(option),
                 Message::AlgorithmChanged
             ),
         ]
@@ -1587,39 +1669,120 @@ fn settings_page(state: &State) -> Element<Message> {
     .into()
 }
 
-fn enigma_settings<'a>() -> Element<'a, Message> {
-    let tmp = "";
+fn enigma_settings(state: &EnigmaArgs) -> Element<Message> {
     column![
         row![
             column![
                 text("Reflector")
                     .width(Length::Fill)
                     .align_x(Alignment::Center),
-                text_input("Wiring", tmp).width(Length::Fill)
+                text_input("Wiring", state.refl_wiring.as_deref().unwrap_or(""))
+                    .on_input(|val| {
+                        let value = if val.len() == 0 { None } else { Some(val) };
+                        Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
+                            EnigmaSettingsMesasge::ReflWiringChanged(value),
+                        ))
+                    })
+                    .width(Length::Fill)
             ]
             .spacing(5),
             column![
                 text("Rotor 1")
                     .width(Length::Fill)
                     .align_x(Alignment::Center),
-                text_input("Wiring", tmp).width(Length::Fill),
-                row![text_input("Notch", tmp), text_input("Position", tmp),].spacing(5)
+                text_input("Wiring", &state.rot1_wiring.as_deref().unwrap_or(""))
+                    .on_input(|val| {
+                        let value = if val.len() == 0 { None } else { Some(val) };
+                        Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
+                            EnigmaSettingsMesasge::Rot1WiringChanged(value),
+                        ))
+                    })
+                    .width(Length::Fill),
+                row![
+                    text_input("Notch", &state.rot1_notch.as_deref().unwrap_or("")).on_input(
+                        |val| {
+                            let value = if val.len() == 0 { None } else { Some(val) };
+                            Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
+                                EnigmaSettingsMesasge::Rot1NotchChanged(value),
+                            ))
+                        }
+                    ),
+                    text_input("Position", &state.rot1_position.as_deref().unwrap_or("")).on_input(
+                        |val| {
+                            let value = if val.len() == 0 { None } else { Some(val) };
+                            Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
+                                EnigmaSettingsMesasge::Rot1PositionChanged(value),
+                            ))
+                        }
+                    ),
+                ]
+                .spacing(5)
             ]
             .spacing(5),
             column![
                 text("Rotor 2")
                     .width(Length::Fill)
                     .align_x(Alignment::Center),
-                text_input("Wiring", tmp).width(Length::Fill),
-                row![text_input("Notch", tmp), text_input("Position", tmp),].spacing(5)
+                text_input("Wiring", &state.rot2_wiring.as_deref().unwrap_or(""))
+                    .on_input(|val| {
+                        let value = if val.len() == 0 { None } else { Some(val) };
+                        Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
+                            EnigmaSettingsMesasge::Rot2WiringChanged(value),
+                        ))
+                    })
+                    .width(Length::Fill),
+                row![
+                    text_input("Notch", &state.rot2_notch.as_deref().unwrap_or("")).on_input(
+                        |val| {
+                            let value = if val.len() == 0 { None } else { Some(val) };
+                            Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
+                                EnigmaSettingsMesasge::Rot2NotchChanged(value),
+                            ))
+                        }
+                    ),
+                    text_input("Position", &state.rot2_position.as_deref().unwrap_or("")).on_input(
+                        |val| {
+                            let value = if val.len() == 0 { None } else { Some(val) };
+                            Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
+                                EnigmaSettingsMesasge::Rot2PositionChanged(value),
+                            ))
+                        }
+                    ),
+                ]
+                .spacing(5)
             ]
             .spacing(5),
             column![
                 text("Rotor 3")
                     .width(Length::Fill)
                     .align_x(Alignment::Center),
-                text_input("Wiring", tmp).width(Length::Fill),
-                row![text_input("Notch", tmp), text_input("Position", tmp),].spacing(5)
+                text_input("Wiring", &state.rot3_wiring.as_deref().unwrap_or(""))
+                    .on_input(|val| {
+                        let value = if val.len() == 0 { None } else { Some(val) };
+                        Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
+                            EnigmaSettingsMesasge::Rot3WiringChanged(value),
+                        ))
+                    })
+                    .width(Length::Fill),
+                row![
+                    text_input("Notch", &state.rot3_notch.as_deref().unwrap_or("")).on_input(
+                        |val| {
+                            let value = if val.len() == 0 { None } else { Some(val) };
+                            Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
+                                EnigmaSettingsMesasge::Rot3NotchChanged(value),
+                            ))
+                        }
+                    ),
+                    text_input("Position", &state.rot3_position.as_deref().unwrap_or("")).on_input(
+                        |val| {
+                            let value = if val.len() == 0 { None } else { Some(val) };
+                            Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
+                                EnigmaSettingsMesasge::Rot3PositionChanged(value),
+                            ))
+                        }
+                    ),
+                ]
+                .spacing(5)
             ]
             .spacing(5),
         ]
@@ -1629,7 +1792,14 @@ fn enigma_settings<'a>() -> Element<'a, Message> {
             text("Plugboard")
                 .width(Length::Fill)
                 .align_x(Alignment::Center),
-            text_input("Pairs", tmp).width(Length::Fill),
+            text_input("Pairs", &state.plugboard.as_deref().unwrap_or(""))
+                .width(Length::Fill)
+                .on_input(|val| {
+                    let value = if val.len() == 0 { None } else { Some(val) };
+                    Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
+                        EnigmaSettingsMesasge::PlugboardChanged(value),
+                    ))
+                }),
         ]
         .width(300)
         .spacing(5)
@@ -1638,25 +1808,36 @@ fn enigma_settings<'a>() -> Element<'a, Message> {
     .into()
 }
 
-fn xxtea_settings<'a>() -> Element<'a, Message> {
-    let key = "";
-
-    column![text_input("Key", &key)
-        .on_input(Message::KeyChanged)
+fn xxtea_settings(state: &XXTEAArgs) -> Element<Message> {
+    column![text_input("Key", state.key.as_deref().unwrap_or(""))
+        .on_input(|val| {
+            let value = if val.len() == 0 { None } else { Some(val) };
+            Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::XXTEA(
+                XXTEASettingsMesasge::KeyChanged(value),
+            ))
+        })
         .width(Length::Fill),]
     .into()
 }
 
-fn xxtea_cfb_settings<'a>() -> Element<'a, Message> {
-    let key = "";
-
+fn xxtea_cfb_settings(state: &XXTEA_CFBArgs) -> Element<Message> {
     column![
-        text_input("IV", &key)
-            .on_input(Message::KeyChanged)
+        text_input("IV", state.iv.as_deref().unwrap_or(""))
+            .on_input(|val| {
+                let value = if val.len() == 0 { None } else { Some(val) };
+                Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::XXTEA_CFB(
+                    XXTEA_CFBSettingsMesasge::IVChanged(value),
+                ))
+            })
             .width(Length::Fill),
         vertical_space().height(10),
-        text_input("Key", &key)
-            .on_input(Message::KeyChanged)
+        text_input("Key", state.key.as_deref().unwrap_or(""))
+            .on_input(|val| {
+                let value = if val.len() == 0 { None } else { Some(val) };
+                Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::XXTEA_CFB(
+                    XXTEA_CFBSettingsMesasge::KeyChanged(value),
+                ))
+            })
             .width(Length::Fill),
     ]
     .into()
@@ -1787,10 +1968,48 @@ struct State {
     fsw: FSWState,
     manual: ManualState,
     tcp: TcpState,
-    algorithm_option: Arc<Mutex<AlgorithmOption>>,
+    settings: SettingsState,
     key: Arc<Mutex<String>>,
 
     toasts: Arc<RwLock<Vec<Toast>>>,
+}
+
+#[derive(Default)]
+struct SettingsState {
+    algorithm_option: AlgorithmOption,
+    enigma_args: EnigmaArgs,
+    xxtea_args: XXTEAArgs,
+    xxtea_cfb_args: XXTEA_CFBArgs,
+}
+
+#[derive(Default)]
+struct EnigmaArgs {
+    refl_wiring: Option<String>,
+
+    rot1_wiring: Option<String>,
+    rot1_notch: Option<String>,
+    rot1_position: Option<String>,
+
+    rot2_wiring: Option<String>,
+    rot2_notch: Option<String>,
+    rot2_position: Option<String>,
+
+    rot3_wiring: Option<String>,
+    rot3_notch: Option<String>,
+    rot3_position: Option<String>,
+
+    plugboard: Option<String>,
+}
+
+#[derive(Default)]
+struct XXTEAArgs {
+    key: Option<String>,
+}
+
+#[derive(Default)]
+struct XXTEA_CFBArgs {
+    key: Option<String>,
+    iv: Option<String>,
 }
 
 // impl Default for State {
@@ -1912,15 +2131,6 @@ impl Default for TcpState {
     }
 }
 
-struct SettingsState {
-    from: Option<PathBuf>,
-    to: Option<PathBuf>,
-    mode: Operation,
-    is_on: bool,
-
-    watcher: Option<Box<dyn Watcher + Send>>,
-}
-
 #[derive(Default)]
 enum TcpMode {
     #[default]
@@ -1944,7 +2154,7 @@ pub enum Message {
     Manual(ManualPageMessage),
     Tcp(TcpPageMessage),
     AlgorithmChanged(AlgorithmOption),
-    KeyChanged(String),
+    AlgorithmSettingsChanged(AlgorithmSettingsMessage),
     DeleteToast(usize),
     Tick,
     Empty,
@@ -1998,4 +2208,37 @@ pub enum TcpPageMessage {
     MyPortChanged(String),
     StartListening,
     StopListening,
+}
+
+#[derive(Debug, Clone)]
+pub enum AlgorithmSettingsMessage {
+    Enigma(EnigmaSettingsMesasge),
+    XXTEA(XXTEASettingsMesasge),
+    XXTEA_CFB(XXTEA_CFBSettingsMesasge),
+}
+
+#[derive(Debug, Clone)]
+pub enum EnigmaSettingsMesasge {
+    ReflWiringChanged(Option<String>),
+    Rot1WiringChanged(Option<String>),
+    Rot1NotchChanged(Option<String>),
+    Rot1PositionChanged(Option<String>),
+    Rot2WiringChanged(Option<String>),
+    Rot2NotchChanged(Option<String>),
+    Rot2PositionChanged(Option<String>),
+    Rot3WiringChanged(Option<String>),
+    Rot3NotchChanged(Option<String>),
+    Rot3PositionChanged(Option<String>),
+    PlugboardChanged(Option<String>),
+}
+
+#[derive(Debug, Clone)]
+pub enum XXTEASettingsMesasge {
+    KeyChanged(Option<String>),
+}
+
+#[derive(Debug, Clone)]
+pub enum XXTEA_CFBSettingsMesasge {
+    KeyChanged(Option<String>),
+    IVChanged(Option<String>),
 }
