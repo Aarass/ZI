@@ -1,5 +1,6 @@
 use super::utils::to_u8_array_26;
 
+#[derive(Clone)]
 pub struct Plugboard {
     wiring: [u8; 26],
 }

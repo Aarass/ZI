@@ -2,7 +2,7 @@ mod algorithms;
 mod hash;
 use algorithms::enigma::alg::Enigma;
 
-use algorithms::xxtea::alg::{XXTEA, XXTEA_CFB};
+use algorithms::xxtea::alg::{Xxtea, XxteaCfb};
 use iced::futures::sink::SinkExt;
 use iced::stream;
 
@@ -22,7 +22,7 @@ use std::time::{Duration, SystemTime};
 use std::{
     fmt::Display,
     path::PathBuf,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, RwLock},
 };
 
 use tokio::{
@@ -69,7 +69,6 @@ async fn process_file<T: Algorithm + ?Sized>(
     file: &PathBuf,
     alg: &Box<T>,
     op: Operation,
-    key: String,
     dest_dir: &Path,
 ) -> anyhow::Result<()> {
     let mut file_handle = tokio::fs::OpenOptions::new().read(true).open(&file).await?;
@@ -83,8 +82,8 @@ async fn process_file<T: Algorithm + ?Sized>(
     };
 
     let processed_file_content = match op {
-        Operation::Encrypt => alg.encrypt(&file_content, key),
-        Operation::Decrypt => alg.decrypt(&file_content, key),
+        Operation::Encrypt => alg.encrypt(&file_content),
+        Operation::Decrypt => alg.decrypt(&file_content),
     }?;
 
     let new_file_path = get_new_file_path(file, dest_dir, op);
@@ -114,15 +113,19 @@ async fn main() -> std::result::Result<(), iced::Error> {
 }
 
 trait Algorithm {
-    fn encrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>>;
-    fn decrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>>;
+    fn encrypt(&self, data: &[u8]) -> anyhow::Result<Vec<u8>>;
+    fn decrypt(&self, data: &[u8]) -> anyhow::Result<Vec<u8>>;
 }
 
-fn get_algorithm(option: AlgorithmOption) -> Box<dyn Algorithm + Send + Sync> {
-    match option {
-        AlgorithmOption::Enigma => Box::new(Enigma {}),
-        AlgorithmOption::XXTEA => Box::new(XXTEA {}),
-        AlgorithmOption::XXTEA_CFB => Box::new(XXTEA_CFB {}),
+fn get_algorithm(settings: &SettingsState) -> anyhow::Result<Box<dyn Algorithm + Send + Sync>> {
+    match settings.algorithm_option {
+        AlgorithmOption::Enigma => {
+            let enigma = Enigma::try_new(&settings.enigma_args)?;
+
+            Ok(Box::new(enigma))
+        }
+        AlgorithmOption::Xxtea => Ok(Box::new(Xxtea {})),
+        AlgorithmOption::XxteaCfb => Ok(Box::new(XxteaCfb {})),
     }
 }
 
@@ -330,7 +333,6 @@ impl State {
                         return Task::none();
                     };
 
-                    let key = self.key.clone();
                     let operation = self.fsw.mode.to_owned();
 
                     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(10);
@@ -351,8 +353,14 @@ impl State {
                     self.fsw.watcher = Some(Box::new(watcher));
 
                     let toasts = self.toasts.clone();
+                    let alg = match get_algorithm(&self.settings) {
+                        Ok(a) => Arc::new(a),
+                        Err(err) => {
+                            push_toast(&toasts, &format!("{}", err), Severity::Success);
+                            return Task::none();
+                        }
+                    };
 
-                    let alg = Arc::new(get_algorithm(self.settings.algorithm_option));
                     tokio::spawn(async move {
                         while let Some(event) = event_rx.recv().await {
                             if !matches!(event.kind, notify::EventKind::Create(_)) {
@@ -372,22 +380,14 @@ impl State {
                                 }
                             }
 
-                            let key = key.lock().unwrap().to_owned();
-
                             let dest_dir = dest_dir.clone();
 
                             let alg = alg.clone();
                             let toasts = toasts.clone();
 
                             tokio::spawn(async move {
-                                match process_file(
-                                    &file_path,
-                                    &alg.deref(),
-                                    operation,
-                                    key,
-                                    &dest_dir,
-                                )
-                                .await
+                                match process_file(&file_path, &alg.deref(), operation, &dest_dir)
+                                    .await
                                 {
                                     Ok(_) => {
                                         push_toast(
@@ -465,9 +465,6 @@ impl State {
                 ManualPageMessage::StartEncryption => {
                     self.manual.is_doing_work = true;
 
-                    let alg = get_algorithm(self.settings.algorithm_option);
-                    let key = self.key.lock().unwrap().to_owned();
-
                     let file_path = self
                         .manual
                         .from
@@ -476,15 +473,22 @@ impl State {
 
                     let dest_dir = self.manual.to.to_owned().expect("UI should not allow this");
 
-                    let alg = Arc::new(alg);
                     let toasts = self.toasts.clone();
+
+                    let alg = match get_algorithm(&self.settings) {
+                        Ok(a) => Arc::new(a),
+                        Err(err) => {
+                            push_toast(&toasts, &format!("{}", err), Severity::Success);
+                            return Task::none();
+                        }
+                    };
+
                     Task::perform(
                         async move {
                             match process_file(
                                 &file_path,
                                 &alg.deref(),
                                 Operation::Encrypt,
-                                key,
                                 &dest_dir,
                             )
                             .await
@@ -516,8 +520,15 @@ impl State {
                 ManualPageMessage::StartDecryption => {
                     self.manual.is_doing_work = true;
 
-                    let alg = get_algorithm(self.settings.algorithm_option);
-                    let key = self.key.lock().unwrap().to_owned();
+                    let toasts = self.toasts.clone();
+
+                    let alg = match get_algorithm(&self.settings) {
+                        Ok(a) => Arc::new(a),
+                        Err(err) => {
+                            push_toast(&toasts, &format!("{}", err), Severity::Success);
+                            return Task::none();
+                        }
+                    };
 
                     let file_path = self
                         .manual
@@ -527,15 +538,12 @@ impl State {
 
                     let dest_dir = self.manual.to.to_owned().expect("UI should not allow this");
 
-                    let alg = Arc::new(alg);
-                    let toasts = self.toasts.clone();
                     Task::perform(
                         async move {
                             match process_file(
                                 &file_path,
                                 &alg.deref(),
                                 Operation::Decrypt,
-                                key,
                                 &dest_dir,
                             )
                             .await
@@ -633,8 +641,13 @@ impl State {
                         }
                     };
 
-                    let alg = get_algorithm(self.settings.algorithm_option);
-                    let key = self.key.clone().lock().unwrap().to_owned();
+                    let alg = match get_algorithm(&self.settings) {
+                        Ok(a) => Arc::new(a),
+                        Err(err) => {
+                            push_toast(&toasts, &format!("{}", err), Severity::Success);
+                            return Task::none();
+                        }
+                    };
 
                     self.tcp.is_sending = true;
                     Task::perform(
@@ -682,7 +695,7 @@ impl State {
                                 }
                             };
 
-                            let encrypted_file_content = match alg.encrypt(&file_content, key) {
+                            let encrypted_file_content = match alg.encrypt(&file_content) {
                                 Ok(v) => v,
                                 Err(err) => {
                                     eprintln!("Error encrypting file content: {:?}", err);
@@ -867,8 +880,13 @@ impl State {
                         .my_port
                         .expect("My port is none when trying to start tcp server");
 
-                    let alg = get_algorithm(self.settings.algorithm_option);
-                    let key = self.key.clone();
+                    let alg = match get_algorithm(&self.settings) {
+                        Ok(a) => Arc::new(a),
+                        Err(err) => {
+                            push_toast(&toasts, &format!("{}", err), Severity::Success);
+                            return Task::none();
+                        }
+                    };
 
                     let handle = tokio::spawn(async move {
                         let listener = match TcpListener::bind(format!("127.0.0.1:{:?}", my_port))
@@ -885,8 +903,6 @@ impl State {
                             }
                         };
 
-                        let alg = Arc::new(alg);
-
                         loop {
                             let (socket, addr) = match listener.accept().await {
                                 Ok(val) => val,
@@ -900,8 +916,6 @@ impl State {
                             let message = format!("Accepted connection with: {:?}", addr);
                             println!("{}", message);
                             push_toast(&toasts, &message, Severity::Info);
-
-                            let key = key.clone();
 
                             let toasts = toasts.clone();
 
@@ -1068,17 +1082,14 @@ impl State {
                                     String::from_utf8_lossy(&encrypted_content)
                                 );
 
-                                let key = key.lock().unwrap().to_owned();
-
-                                let decrypted_file_content =
-                                    match alg.decrypt(&encrypted_content, key) {
-                                        Ok(v) => v,
-                                        Err(err) => {
-                                            eprintln!("Error decrypting file content: {:?}", err);
-                                            push_toast(&toasts, "Error", Severity::Error);
-                                            return ();
-                                        }
-                                    };
+                                let decrypted_file_content = match alg.decrypt(&encrypted_content) {
+                                    Ok(v) => v,
+                                    Err(err) => {
+                                        eprintln!("Error decrypting file content: {:?}", err);
+                                        push_toast(&toasts, "Error", Severity::Error);
+                                        return ();
+                                    }
+                                };
                                 println!(
                                     "Decrypted data:\n {:?}",
                                     String::from_utf8_lossy(&decrypted_file_content)
@@ -1164,21 +1175,21 @@ impl State {
                             }
                         }
                     }
-                    AlgorithmSettingsMessage::XXTEA(xxteasettings_mesasge) => {
+                    AlgorithmSettingsMessage::Xxtea(xxteasettings_mesasge) => {
                         match xxteasettings_mesasge {
-                            XXTEASettingsMesasge::KeyChanged(value) => {
+                            XxteaSettingsMesasge::KeyChanged(value) => {
                                 self.settings.xxtea_args.key = value;
                                 Task::none()
                             }
                         }
                     }
-                    AlgorithmSettingsMessage::XXTEA_CFB(xxtea_cfbsettings_mesasge) => {
+                    AlgorithmSettingsMessage::XxteaCfb(xxtea_cfbsettings_mesasge) => {
                         match xxtea_cfbsettings_mesasge {
-                            XXTEA_CFBSettingsMesasge::KeyChanged(value) => {
+                            XxteaCfbSettingsMesasge::KeyChanged(value) => {
                                 self.settings.xxtea_cfb_args.key = value;
                                 Task::none()
                             }
-                            XXTEA_CFBSettingsMesasge::IVChanged(value) => {
+                            XxteaCfbSettingsMesasge::IVChanged(value) => {
                                 self.settings.xxtea_cfb_args.iv = value;
                                 Task::none()
                             }
@@ -1618,8 +1629,8 @@ fn tcp_recieve_widget(state: &State) -> Element<Message> {
 pub enum AlgorithmOption {
     #[default]
     Enigma,
-    XXTEA,
-    XXTEA_CFB,
+    Xxtea,
+    XxteaCfb,
 }
 
 impl Display for AlgorithmOption {
@@ -1629,8 +1640,8 @@ impl Display for AlgorithmOption {
             "{}",
             match self {
                 AlgorithmOption::Enigma => "Enigma",
-                AlgorithmOption::XXTEA => "XXTEA",
-                AlgorithmOption::XXTEA_CFB => "XXTEA CFB",
+                AlgorithmOption::Xxtea => "XXTEA",
+                AlgorithmOption::XxteaCfb => "XXTEA CFB",
             }
         )
     }
@@ -1641,8 +1652,8 @@ fn settings_page(state: &State) -> Element<Message> {
 
     let args: Element<Message> = match option {
         AlgorithmOption::Enigma => enigma_settings(&state.settings.enigma_args),
-        AlgorithmOption::XXTEA => xxtea_settings(&state.settings.xxtea_args),
-        AlgorithmOption::XXTEA_CFB => xxtea_cfb_settings(&state.settings.xxtea_cfb_args),
+        AlgorithmOption::Xxtea => xxtea_settings(&state.settings.xxtea_args),
+        AlgorithmOption::XxteaCfb => xxtea_cfb_settings(&state.settings.xxtea_cfb_args),
     };
 
     column![
@@ -1652,8 +1663,8 @@ fn settings_page(state: &State) -> Element<Message> {
             pick_list(
                 vec![
                     AlgorithmOption::Enigma,
-                    AlgorithmOption::XXTEA,
-                    AlgorithmOption::XXTEA_CFB
+                    AlgorithmOption::Xxtea,
+                    AlgorithmOption::XxteaCfb
                 ],
                 Some(option),
                 Message::AlgorithmChanged
@@ -1808,25 +1819,25 @@ fn enigma_settings(state: &EnigmaArgs) -> Element<Message> {
     .into()
 }
 
-fn xxtea_settings(state: &XXTEAArgs) -> Element<Message> {
+fn xxtea_settings(state: &XxteaArgs) -> Element<Message> {
     column![text_input("Key", state.key.as_deref().unwrap_or(""))
         .on_input(|val| {
             let value = if val.len() == 0 { None } else { Some(val) };
-            Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::XXTEA(
-                XXTEASettingsMesasge::KeyChanged(value),
+            Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Xxtea(
+                XxteaSettingsMesasge::KeyChanged(value),
             ))
         })
         .width(Length::Fill),]
     .into()
 }
 
-fn xxtea_cfb_settings(state: &XXTEA_CFBArgs) -> Element<Message> {
+fn xxtea_cfb_settings(state: &XxteaCfbArgs) -> Element<Message> {
     column![
         text_input("IV", state.iv.as_deref().unwrap_or(""))
             .on_input(|val| {
                 let value = if val.len() == 0 { None } else { Some(val) };
-                Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::XXTEA_CFB(
-                    XXTEA_CFBSettingsMesasge::IVChanged(value),
+                Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::XxteaCfb(
+                    XxteaCfbSettingsMesasge::IVChanged(value),
                 ))
             })
             .width(Length::Fill),
@@ -1834,8 +1845,8 @@ fn xxtea_cfb_settings(state: &XXTEA_CFBArgs) -> Element<Message> {
         text_input("Key", state.key.as_deref().unwrap_or(""))
             .on_input(|val| {
                 let value = if val.len() == 0 { None } else { Some(val) };
-                Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::XXTEA_CFB(
-                    XXTEA_CFBSettingsMesasge::KeyChanged(value),
+                Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::XxteaCfb(
+                    XxteaCfbSettingsMesasge::KeyChanged(value),
                 ))
             })
             .width(Length::Fill),
@@ -1969,7 +1980,6 @@ struct State {
     manual: ManualState,
     tcp: TcpState,
     settings: SettingsState,
-    key: Arc<Mutex<String>>,
 
     toasts: Arc<RwLock<Vec<Toast>>>,
 }
@@ -1978,12 +1988,11 @@ struct State {
 struct SettingsState {
     algorithm_option: AlgorithmOption,
     enigma_args: EnigmaArgs,
-    xxtea_args: XXTEAArgs,
-    xxtea_cfb_args: XXTEA_CFBArgs,
+    xxtea_args: XxteaArgs,
+    xxtea_cfb_args: XxteaCfbArgs,
 }
 
-#[derive(Default)]
-struct EnigmaArgs {
+pub struct EnigmaArgs {
     refl_wiring: Option<String>,
 
     rot1_wiring: Option<String>,
@@ -2001,13 +2010,31 @@ struct EnigmaArgs {
     plugboard: Option<String>,
 }
 
+impl Default for EnigmaArgs {
+    fn default() -> Self {
+        EnigmaArgs {
+            refl_wiring: Some("yruhqsldpxngokmiebfzcwvjat".to_owned()),
+            rot1_wiring: Some("ekmflgdqvzntowyhxuspaibrcj".to_owned()),
+            rot1_notch: Some("8".to_owned()),
+            rot1_position: Some("0".to_owned()),
+            rot2_wiring: Some("ajdksiruxblhwtmcqgznpyfvoe".to_owned()),
+            rot2_notch: Some("8".to_owned()),
+            rot2_position: Some("0".to_owned()),
+            rot3_wiring: Some("bdfhjlcprtxvznyeiwgakmusqo".to_owned()),
+            rot3_notch: Some("0".to_owned()),
+            rot3_position: Some("0".to_owned()),
+            plugboard: Some("po ml iu kj nh yt gb vf re dc".to_owned()),
+        }
+    }
+}
+
 #[derive(Default)]
-struct XXTEAArgs {
+pub struct XxteaArgs {
     key: Option<String>,
 }
 
 #[derive(Default)]
-struct XXTEA_CFBArgs {
+pub struct XxteaCfbArgs {
     key: Option<String>,
     iv: Option<String>,
 }
@@ -2213,8 +2240,8 @@ pub enum TcpPageMessage {
 #[derive(Debug, Clone)]
 pub enum AlgorithmSettingsMessage {
     Enigma(EnigmaSettingsMesasge),
-    XXTEA(XXTEASettingsMesasge),
-    XXTEA_CFB(XXTEA_CFBSettingsMesasge),
+    Xxtea(XxteaSettingsMesasge),
+    XxteaCfb(XxteaCfbSettingsMesasge),
 }
 
 #[derive(Debug, Clone)]
@@ -2233,12 +2260,12 @@ pub enum EnigmaSettingsMesasge {
 }
 
 #[derive(Debug, Clone)]
-pub enum XXTEASettingsMesasge {
+pub enum XxteaSettingsMesasge {
     KeyChanged(Option<String>),
 }
 
 #[derive(Debug, Clone)]
-pub enum XXTEA_CFBSettingsMesasge {
+pub enum XxteaCfbSettingsMesasge {
     KeyChanged(Option<String>),
     IVChanged(Option<String>),
 }

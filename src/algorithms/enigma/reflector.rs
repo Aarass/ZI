@@ -1,4 +1,4 @@
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Reflector {
     pub wiring: [u8; 26],
 }

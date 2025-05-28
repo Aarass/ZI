@@ -1,4 +1,4 @@
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Rotor {
     pub wiring: [u8; 26],
     pub notch_position: u8,

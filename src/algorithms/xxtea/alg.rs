@@ -3,18 +3,18 @@ use crate::Algorithm;
 const DELTA: u32 = 0x9e3779b9;
 
 #[allow(clippy::upper_case_acronyms)]
-pub struct XXTEA {}
+pub struct Xxtea {}
 
-impl Algorithm for XXTEA {
-    fn encrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>> {
-        let key = key.as_bytes();
+impl Algorithm for Xxtea {
+    fn encrypt(&self, data: &[u8]) -> anyhow::Result<Vec<u8>> {
+        let key = "".as_bytes();
         let res = to_bytes(&encrypt_(to_u32(&data, true), &to_u32(&key, false)), false);
 
         Ok(res)
     }
 
-    fn decrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>> {
-        let key = key.as_bytes();
+    fn decrypt(&self, data: &[u8]) -> anyhow::Result<Vec<u8>> {
+        let key = "".as_bytes();
         let res = to_bytes(&decrypt_(to_u32(&data, false), &to_u32(&key, false)), true);
 
         Ok(res)
@@ -22,14 +22,14 @@ impl Algorithm for XXTEA {
 }
 
 #[allow(clippy::upper_case_acronyms)]
-pub struct XXTEA_CFB {}
+pub struct XxteaCfb {}
 
 const BLOCK_SIZE: usize = 8;
 const IV: [u8; 10] = [0u8; 10];
 
-impl Algorithm for XXTEA_CFB {
-    fn encrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>> {
-        let key = key.as_bytes();
+impl Algorithm for XxteaCfb {
+    fn encrypt(&self, data: &[u8]) -> anyhow::Result<Vec<u8>> {
+        let key = "".as_bytes();
 
         let mut res = Vec::with_capacity(data.len());
 
@@ -54,8 +54,8 @@ impl Algorithm for XXTEA_CFB {
         Ok(res)
     }
 
-    fn decrypt(&self, data: &[u8], key: String) -> anyhow::Result<Vec<u8>> {
-        let key = key.as_bytes();
+    fn decrypt(&self, data: &[u8]) -> anyhow::Result<Vec<u8>> {
+        let key = "".as_bytes();
 
         let mut res = Vec::with_capacity(data.len());
 
@@ -83,7 +83,7 @@ impl Algorithm for XXTEA_CFB {
 
 #[test]
 fn cfb() {
-    let alg = XXTEA_CFB {};
+    let alg = XxteaCfb {};
 
     let data = "Hellouw there".as_bytes();
     let key: &str = "SecretKey";
