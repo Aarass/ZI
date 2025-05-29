@@ -11,6 +11,10 @@ impl Plugboard {
 
         let mut wiring = to_u8_array_26("abcdefghijklmnopqrstuvwxyz");
 
+        if pairs.is_empty() {
+            return Plugboard { wiring };
+        }
+
         pairs.split(' ').for_each(|pair| {
             assert_eq!(pair.len(), 2);
 

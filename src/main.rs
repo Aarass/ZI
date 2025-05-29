@@ -1,6 +1,7 @@
 mod algorithms;
 mod hash;
 use algorithms::enigma::alg::Enigma;
+use anyhow::anyhow;
 
 use algorithms::xxtea::alg::{Xxtea, XxteaCfb};
 use iced::futures::sink::SinkExt;
@@ -41,28 +42,71 @@ enum Operation {
     Decrypt,
 }
 
-fn get_new_file_name(file: &Path, op: Operation) -> String {
-    let file_stem = file.file_stem().unwrap();
-    let extension = file.extension().unwrap_or_default();
+use tokio::fs;
 
-    match op {
-        Operation::Encrypt => format!(
-            "{}_encrypted.{}",
-            file_stem.to_str().unwrap(),
-            extension.to_str().unwrap()
-        ),
-        Operation::Decrypt => format!(
-            "{}_decrypted.{}",
-            file_stem.to_str().unwrap(),
-            extension.to_str().unwrap()
-        ),
+async fn get_new_file_path(file: &Path, dest_dir: &Path, op: Operation) -> anyhow::Result<PathBuf> {
+    let file_stem = file.file_stem().unwrap_or_default().to_str().unwrap();
+    let extension = file
+        .extension()
+        .unwrap_or_default()
+        .to_str()
+        .unwrap_or_default();
+
+    for i in 0..100 {
+        let num = format!(" ({})", i);
+        let num = if i == 0 { "" } else { &num };
+
+        let name = match op {
+            Operation::Encrypt => format!("{}_encrypted{}.{}", file_stem, num, extension),
+            Operation::Decrypt => format!("{}_decrypted{}.{}", file_stem, num, extension),
+        };
+
+        let new_path = dest_dir.join(name);
+
+        if !fs::try_exists(&new_path).await? {
+            return Ok(new_path);
+        }
     }
+
+    Err(anyhow!("Couldn't find available name for the result file"))
 }
 
-fn get_new_file_path(file: &Path, dest_dir: &Path, op: Operation) -> PathBuf {
-    let mut tmp = dest_dir.to_path_buf().clone();
-    tmp.push(get_new_file_name(file, op));
-    tmp
+async fn get_new_file_path2(
+    filename: &str,
+    dest_dir: &Path,
+    op: Operation,
+) -> anyhow::Result<PathBuf> {
+    let parts: Vec<&str> = filename.split(".").collect();
+
+    if parts.len() != 2 {
+        return Err(anyhow!("Hellow"));
+    }
+
+    let file_stem = parts[0];
+    let extension = parts[1];
+
+    println!(
+        "get file name 2 - file_stem: {}, extension: {}",
+        file_stem, extension
+    );
+
+    for i in 0..100 {
+        let num = format!(" ({})", i);
+        let num = if i == 0 { "" } else { &num };
+
+        let name = match op {
+            Operation::Encrypt => format!("{}_encrypted{}.{}", file_stem, num, extension),
+            Operation::Decrypt => format!("{}_decrypted{}.{}", file_stem, num, extension),
+        };
+
+        let new_path = dest_dir.join(name);
+
+        if !fs::try_exists(&new_path).await? {
+            return Ok(new_path);
+        }
+    }
+
+    Err(anyhow!("Couldn't find available name for the result file"))
 }
 
 async fn process_file<T: Algorithm + ?Sized>(
@@ -86,7 +130,7 @@ async fn process_file<T: Algorithm + ?Sized>(
         Operation::Decrypt => alg.decrypt(&file_content),
     }?;
 
-    let new_file_path = get_new_file_path(file, dest_dir, op);
+    let new_file_path = get_new_file_path(file, dest_dir, op).await?;
     let mut new_file = tokio::fs::File::create(new_file_path).await?;
     new_file.write_all(&processed_file_content).await?;
 
@@ -322,10 +366,10 @@ impl State {
                     } {
                         eprintln!("Source and destination directory are the same. This would create an infinite loop.");
                         push_toast(
-                                    &self.toasts,
-                                    "Source and destination directory are the same. This would create an infinite loop.",
-                                    Severity::Error,
-                                );
+                                            &self.toasts,
+                                            "Source and destination directory are the same. This would create an infinite loop.",
+                                            Severity::Error,
+                                        );
                         return Task::none();
                     };
 
@@ -334,13 +378,13 @@ impl State {
                     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(10);
 
                     let mut watcher = recommended_watcher(move |res| {
-                                    match res {
-                                        Ok(event) => {
-                                            event_tx.blocking_send(event).expect("Send error. A send operation can only fail if the receiving end of a channel is disconnected, implying that the data could never be received. The error contains the data being sent as a payload so it can be recovered.")
-                                        },
-                                        Err(e) => println!("Event handler recieved error: {:?}", e),
-                                    }
-                                }).expect("Couldn't create watcher");
+                                            match res {
+                                                Ok(event) => {
+                                                    event_tx.blocking_send(event).expect("Send error. A send operation can only fail if the receiving end of a channel is disconnected, implying that the data could never be received. The error contains the data being sent as a payload so it can be recovered.")
+                                                },
+                                                Err(e) => println!("Event handler recieved error: {:?}", e),
+                                            }
+                                        }).expect("Couldn't create watcher");
 
                     watcher
                         .watch(&dir_to_watch, RecursiveMode::NonRecursive)
@@ -349,13 +393,8 @@ impl State {
                     self.fsw.watcher = Some(Box::new(watcher));
 
                     let toasts = self.toasts.clone();
-                    let alg = match get_algorithm(&self.settings) {
-                        Ok(a) => Arc::new(a),
-                        Err(err) => {
-                            push_toast(&toasts, &format!("{}", err), Severity::Success);
-                            return Task::none();
-                        }
-                    };
+
+                    let settings_pointer = Arc::clone(&self.commited_settings);
 
                     tokio::spawn(async move {
                         while let Some(event) = event_rx.recv().await {
@@ -378,11 +417,18 @@ impl State {
 
                             let dest_dir = dest_dir.clone();
 
-                            let alg = alg.clone();
                             let toasts = toasts.clone();
 
+                            let alg = match get_algorithm(&settings_pointer.read().unwrap()) {
+                                Ok(a) => a,
+                                Err(err) => {
+                                    push_toast(&toasts, &format!("{}", err), Severity::Error);
+                                    return ();
+                                }
+                            };
+
                             tokio::spawn(async move {
-                                match process_file(&file_path, &alg.deref(), operation, &dest_dir)
+                                return match process_file(&file_path, &alg, operation, &dest_dir)
                                     .await
                                 {
                                     Ok(_) => {
@@ -403,7 +449,7 @@ impl State {
                                             Severity::Error,
                                         );
                                     }
-                                }
+                                };
                             });
                         }
                     });
@@ -471,10 +517,11 @@ impl State {
 
                     let toasts = self.toasts.clone();
 
-                    let alg = match get_algorithm(&self.settings) {
+                    let alg = match get_algorithm(&self.commited_settings.read().unwrap()) {
                         Ok(a) => Arc::new(a),
                         Err(err) => {
-                            push_toast(&toasts, &format!("{}", err), Severity::Success);
+                            push_toast(&toasts, &format!("{}", err), Severity::Error);
+                            self.manual.is_doing_work = false;
                             return Task::none();
                         }
                     };
@@ -518,10 +565,11 @@ impl State {
 
                     let toasts = self.toasts.clone();
 
-                    let alg = match get_algorithm(&self.settings) {
+                    let alg = match get_algorithm(&self.commited_settings.read().unwrap()) {
                         Ok(a) => Arc::new(a),
                         Err(err) => {
-                            push_toast(&toasts, &format!("{}", err), Severity::Success);
+                            push_toast(&toasts, &format!("{}", err), Severity::Error);
+                            self.manual.is_doing_work = false;
                             return Task::none();
                         }
                     };
@@ -637,7 +685,7 @@ impl State {
                         }
                     };
 
-                    let alg = match get_algorithm(&self.settings) {
+                    let alg = match get_algorithm(&self.commited_settings.read().unwrap()) {
                         Ok(a) => Arc::new(a),
                         Err(err) => {
                             push_toast(&toasts, &format!("{}", err), Severity::Success);
@@ -820,9 +868,9 @@ impl State {
                                         }
                                         Err(err) => {
                                             eprintln!(
-                                                        "An error occurred while closing the connection: {:?}",
-                                                        err
-                                                    );
+                                                                "An error occurred while closing the connection: {:?}",
+                                                                err
+                                                            );
                                             push_toast(
                                                 &toasts,
                                                 "An error occurred while closing the connection",
@@ -876,13 +924,13 @@ impl State {
                         .my_port
                         .expect("My port is none when trying to start tcp server");
 
-                    let alg = match get_algorithm(&self.settings) {
-                        Ok(a) => Arc::new(a),
-                        Err(err) => {
-                            push_toast(&toasts, &format!("{}", err), Severity::Success);
-                            return Task::none();
-                        }
-                    };
+                    let dest_dir = self
+                        .tcp
+                        .dir_to_store_files
+                        .clone()
+                        .expect("Dest dir is none when trying to start tcp server");
+
+                    let settings_pointer = self.commited_settings.clone();
 
                     let handle = tokio::spawn(async move {
                         let listener = match TcpListener::bind(format!("127.0.0.1:{:?}", my_port))
@@ -915,7 +963,15 @@ impl State {
 
                             let toasts = toasts.clone();
 
-                            let alg = alg.clone();
+                            let alg = match get_algorithm(&settings_pointer.read().unwrap()) {
+                                Ok(a) => Arc::new(a),
+                                Err(err) => {
+                                    push_toast(&toasts, &format!("{}", err), Severity::Success);
+                                    return;
+                                }
+                            };
+
+                            let dest_dir = dest_dir.clone();
                             tokio::spawn(async move {
                                 let mut socket = BufReader::new(socket);
                                 match socket.fill_buf().await {
@@ -1086,10 +1142,54 @@ impl State {
                                         return ();
                                     }
                                 };
+
                                 println!(
                                     "Decrypted data:\n {:?}",
                                     String::from_utf8_lossy(&decrypted_file_content)
                                 );
+
+                                let new_file_path = match get_new_file_path2(
+                                    file_name,
+                                    &dest_dir,
+                                    Operation::Decrypt,
+                                )
+                                .await
+                                {
+                                    Ok(val) => val,
+                                    Err(_) => {
+                                        push_toast(
+                                            &toasts,
+                                            "Couldn't find available name for the file",
+                                            Severity::Error,
+                                        );
+                                        return;
+                                    }
+                                };
+
+                                let mut new_file =
+                                    match tokio::fs::File::create(new_file_path).await {
+                                        Ok(val) => val,
+                                        Err(_) => {
+                                            push_toast(
+                                                &toasts,
+                                                "Couldn't create file to store result into",
+                                                Severity::Error,
+                                            );
+                                            return;
+                                        }
+                                    };
+
+                                match new_file.write_all(&decrypted_file_content).await {
+                                    Ok(_) => (),
+                                    Err(_) => {
+                                        push_toast(
+                                            &toasts,
+                                            "Error while writing result to the file",
+                                            Severity::Error,
+                                        );
+                                        return;
+                                    }
+                                };
 
                                 push_toast(
                                     &toasts,
@@ -1197,6 +1297,10 @@ impl State {
                     }
                 }
             }
+            Message::CommitSettings => {
+                self.commit_settings();
+                Task::none()
+            }
             Message::DeleteToast(id) => {
                 let index = self
                     .toasts
@@ -1245,6 +1349,17 @@ impl State {
             })
         })
         .map(|_| Message::Tick)
+    }
+
+    fn commit_settings(&self) {
+        match self.commited_settings.write() {
+            Ok(mut write_handle) => {
+                *write_handle = self.settings.clone();
+            }
+            Err(err) => {
+                push_toast(&self.toasts, &format!("{}", err), Severity::Error);
+            }
+        }
     }
 }
 
@@ -1673,7 +1788,11 @@ fn settings_page(state: &State) -> Element<Message> {
         .align_y(Alignment::Center),
         container(column![args])
             .center_y(Length::Fill)
-            .padding([0, 50])
+            .padding([0, 50]),
+        button(text("Save").align_x(alignment::Horizontal::Center))
+            .width(Length::Shrink)
+            .on_press(Message::CommitSettings),
+        vertical_space().height(30),
     ]
     .height(Length::Fill)
     .align_x(alignment::Horizontal::Center)
@@ -1991,11 +2110,12 @@ struct State {
     manual: ManualState,
     tcp: TcpState,
     settings: SettingsState,
+    commited_settings: Arc<RwLock<SettingsState>>,
 
     toasts: Arc<RwLock<Vec<Toast>>>,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct SettingsState {
     algorithm_option: AlgorithmOption,
     enigma_args: EnigmaArgs,
@@ -2003,6 +2123,7 @@ struct SettingsState {
     xxtea_cfb_args: XxteaCfbArgs,
 }
 
+#[derive(Clone)]
 pub struct EnigmaArgs {
     refl_wiring: Option<String>,
 
@@ -2039,12 +2160,12 @@ impl Default for EnigmaArgs {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct XxteaArgs {
     key: Option<String>,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct XxteaCfbArgs {
     key: Option<String>,
     iv: Option<String>,
@@ -2194,6 +2315,7 @@ pub enum Message {
     Tcp(TcpPageMessage),
     AlgorithmChanged(AlgorithmOption),
     AlgorithmSettingsChanged(AlgorithmSettingsMessage),
+    CommitSettings,
     DeleteToast(usize),
     Tick,
     Empty,

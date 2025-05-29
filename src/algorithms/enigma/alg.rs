@@ -38,7 +38,7 @@ impl Enigma {
                         position: args.rot3_position.as_ref().unwrap().parse().unwrap(),
                     },
                 ]),
-                plugboard: Plugboard::new(&args.plugboard.as_ref().unwrap()),
+                plugboard: Plugboard::new(&args.plugboard.clone().unwrap_or_default()),
             })
         } else {
             Err(anyhow!("Validation failed"))
@@ -56,7 +56,6 @@ impl Enigma {
             || args.rot3_wiring.is_none()
             || args.rot3_notch.is_none()
             || args.rot3_position.is_none()
-            || args.plugboard.is_none()
         {
             return false;
         }
@@ -112,9 +111,8 @@ impl Enigma {
 
         if !args
             .plugboard
-            .as_ref()
-            .unwrap()
             .clone()
+            .unwrap_or_default()
             .split_whitespace()
             .all(|pair| (pair.len() == 2) && pair.chars().all(|c| c.is_ascii_lowercase()))
         {
@@ -127,6 +125,11 @@ impl Enigma {
     }
 }
 
+#[test]
+fn to_ascii_lowercase() {
+    println!("{}", "a b".to_ascii_lowercase());
+}
+
 impl Algorithm for Enigma {
     fn encrypt(&self, data: &[u8]) -> anyhow::Result<Vec<u8>> {
         let mut rotors = self.rotor_assembly.clone();
@@ -134,12 +137,16 @@ impl Algorithm for Enigma {
         let plugboard = self.plugboard.clone();
 
         Ok(data
-            .to_ascii_lowercase()
             .iter()
+            .filter_map(|&b| match b {
+                b'A'..=b'Z' => Some(b + 32),
+                b'a'..=b'z' => Some(b),
+                _ => None,
+            })
             .map(|letter| {
                 rotors.rotate();
 
-                let l1 = plugboard.get_output(*letter);
+                let l1 = plugboard.get_output(letter);
 
                 let l2 = rotors.get_output(l1);
                 let l3 = reflector.reflect(l2);
