@@ -119,13 +119,9 @@ trait Algorithm {
 
 fn get_algorithm(settings: &SettingsState) -> anyhow::Result<Box<dyn Algorithm + Send + Sync>> {
     match settings.algorithm_option {
-        AlgorithmOption::Enigma => {
-            let enigma = Enigma::try_new(&settings.enigma_args)?;
-
-            Ok(Box::new(enigma))
-        }
-        AlgorithmOption::Xxtea => Ok(Box::new(Xxtea {})),
-        AlgorithmOption::XxteaCfb => Ok(Box::new(XxteaCfb {})),
+        AlgorithmOption::Enigma => Ok(Box::new(Enigma::try_new(&settings.enigma_args)?)),
+        AlgorithmOption::Xxtea => Ok(Box::new(Xxtea::try_new(&settings.xxtea_args)?)),
+        AlgorithmOption::XxteaCfb => Ok(Box::new(XxteaCfb::try_new(&settings.xxtea_cfb_args)?)),
     }
 }
 
@@ -1193,6 +1189,10 @@ impl State {
                                 self.settings.xxtea_cfb_args.iv = value;
                                 Task::none()
                             }
+                            XxteaCfbSettingsMesasge::BlockSizeChanged(value) => {
+                                self.settings.xxtea_cfb_args.block_size = value;
+                                Task::none()
+                            }
                         }
                     }
                 }
@@ -1833,14 +1833,25 @@ fn xxtea_settings(state: &XxteaArgs) -> Element<Message> {
 
 fn xxtea_cfb_settings(state: &XxteaCfbArgs) -> Element<Message> {
     column![
-        text_input("IV", state.iv.as_deref().unwrap_or(""))
-            .on_input(|val| {
-                let value = if val.len() == 0 { None } else { Some(val) };
-                Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::XxteaCfb(
-                    XxteaCfbSettingsMesasge::IVChanged(value),
-                ))
-            })
-            .width(Length::Fill),
+        row![
+            text_input("IV", state.iv.as_deref().unwrap_or(""))
+                .on_input(|val| {
+                    let value = if val.len() == 0 { None } else { Some(val) };
+                    Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::XxteaCfb(
+                        XxteaCfbSettingsMesasge::IVChanged(value),
+                    ))
+                })
+                .width(Length::Fill),
+            text_input("Block Size", state.block_size.as_deref().unwrap_or(""))
+                .on_input(|val| {
+                    let value = if val.len() == 0 { None } else { Some(val) };
+                    Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::XxteaCfb(
+                        XxteaCfbSettingsMesasge::BlockSizeChanged(value),
+                    ))
+                })
+                .width(100),
+        ]
+        .spacing(10),
         vertical_space().height(10),
         text_input("Key", state.key.as_deref().unwrap_or(""))
             .on_input(|val| {
@@ -2037,6 +2048,7 @@ pub struct XxteaArgs {
 pub struct XxteaCfbArgs {
     key: Option<String>,
     iv: Option<String>,
+    block_size: Option<String>,
 }
 
 // impl Default for State {
@@ -2268,4 +2280,5 @@ pub enum XxteaSettingsMesasge {
 pub enum XxteaCfbSettingsMesasge {
     KeyChanged(Option<String>),
     IVChanged(Option<String>),
+    BlockSizeChanged(Option<String>),
 }

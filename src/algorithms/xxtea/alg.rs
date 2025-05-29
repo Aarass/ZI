@@ -1,20 +1,37 @@
-use crate::Algorithm;
+use anyhow::{anyhow, Ok};
+
+use crate::{Algorithm, XxteaArgs, XxteaCfbArgs};
 
 const DELTA: u32 = 0x9e3779b9;
 
 #[allow(clippy::upper_case_acronyms)]
-pub struct Xxtea {}
+pub struct Xxtea {
+    key: String,
+}
+
+impl Xxtea {
+    pub fn try_new(args: &XxteaArgs) -> anyhow::Result<Xxtea> {
+        match &args.key {
+            Some(key) => {
+                return Ok(Xxtea {
+                    key: key.to_owned(),
+                });
+            }
+            None => Err(anyhow!("Validation failed")),
+        }
+    }
+}
 
 impl Algorithm for Xxtea {
     fn encrypt(&self, data: &[u8]) -> anyhow::Result<Vec<u8>> {
-        let key = "".as_bytes();
+        let key = self.key.as_bytes();
         let res = to_bytes(&encrypt_(to_u32(&data, true), &to_u32(&key, false)), false);
 
         Ok(res)
     }
 
     fn decrypt(&self, data: &[u8]) -> anyhow::Result<Vec<u8>> {
-        let key = "".as_bytes();
+        let key = self.key.as_bytes();
         let res = to_bytes(&decrypt_(to_u32(&data, false), &to_u32(&key, false)), true);
 
         Ok(res)
@@ -22,24 +39,56 @@ impl Algorithm for Xxtea {
 }
 
 #[allow(clippy::upper_case_acronyms)]
-pub struct XxteaCfb {}
+pub struct XxteaCfb {
+    iv: Vec<u8>,
+    block_size: usize,
+    key: String,
+}
 
-const BLOCK_SIZE: usize = 8;
-const IV: [u8; 10] = [0u8; 10];
+impl XxteaCfb {
+    pub fn try_new(args: &XxteaCfbArgs) -> anyhow::Result<XxteaCfb> {
+        if args.iv.is_none() || args.block_size.is_none() || args.key.is_none() {
+            return Err(anyhow!("Some fields are missing"));
+        }
+
+        let block_size = args.block_size.as_ref().unwrap().parse::<usize>()?;
+
+        if block_size < 8 {
+            return Err(anyhow!("Block Size must be 8 or more"));
+        }
+
+        let iv = args.iv.as_ref().unwrap().to_owned().into_bytes();
+        let key = args.key.as_ref().unwrap();
+
+        if iv.is_empty() || key.is_empty() {
+            return Err(anyhow!("IV or Key is empty"));
+        }
+
+        if iv.len() < block_size {
+            return Err(anyhow!("IV must be at least Block Size long"));
+        }
+
+        return Ok(XxteaCfb {
+            iv,
+            block_size,
+            key: key.to_owned(),
+        });
+    }
+}
 
 impl Algorithm for XxteaCfb {
     fn encrypt(&self, data: &[u8]) -> anyhow::Result<Vec<u8>> {
-        let key = "".as_bytes();
+        let key = self.key.as_bytes();
 
         let mut res = Vec::with_capacity(data.len());
 
-        let mut prev = IV[0..BLOCK_SIZE].to_vec();
+        let mut prev = self.iv[0..self.block_size].to_vec();
 
-        for plainblock in data.chunks(BLOCK_SIZE) {
+        for plainblock in data.chunks(self.block_size) {
             let intermidiate =
                 to_bytes(&encrypt_(to_u32(&prev, false), &to_u32(&key, false)), false);
 
-            assert_eq!(intermidiate.len(), BLOCK_SIZE);
+            assert_eq!(intermidiate.len(), self.block_size);
 
             let ciphertext: Vec<u8> = plainblock
                 .iter()
@@ -55,17 +104,17 @@ impl Algorithm for XxteaCfb {
     }
 
     fn decrypt(&self, data: &[u8]) -> anyhow::Result<Vec<u8>> {
-        let key = "".as_bytes();
+        let key = self.key.as_bytes();
 
         let mut res = Vec::with_capacity(data.len());
 
-        let mut prev = IV[0..BLOCK_SIZE].to_vec();
+        let mut prev = self.iv[0..self.block_size].to_vec();
 
-        for cipherblock in data.chunks(BLOCK_SIZE) {
+        for cipherblock in data.chunks(self.block_size) {
             let intermidiate =
                 to_bytes(&encrypt_(to_u32(&prev, false), &to_u32(&key, false)), false);
 
-            assert_eq!(intermidiate.len(), BLOCK_SIZE);
+            assert_eq!(intermidiate.len(), self.block_size);
 
             let plaintext: Vec<u8> = cipherblock
                 .iter()
@@ -83,17 +132,21 @@ impl Algorithm for XxteaCfb {
 
 #[test]
 fn cfb() {
-    let alg = XxteaCfb {};
+    let alg = XxteaCfb::try_new(&XxteaCfbArgs {
+        iv: Some("asdfas34asdfasdfasdkljsdklfj".to_owned()),
+        block_size: Some("8".to_owned()),
+        key: Some("SecretKey".to_owned()),
+    })
+    .unwrap();
 
     let data = "Hellouw there".as_bytes();
-    let key: &str = "SecretKey";
 
-    let encrypted = alg.encrypt(data, key.to_owned()).unwrap();
+    let encrypted = alg.encrypt(data).unwrap();
 
     println!("Encrypted data: {:?}", encrypted);
     println!("Encrypted data: {:?}", String::from_utf8_lossy(&encrypted));
 
-    let decrypted = alg.decrypt(&encrypted, key.to_owned()).unwrap();
+    let decrypted = alg.decrypt(&encrypted).unwrap();
 
     println!("Decrypted data: {:?}", decrypted);
     println!("Decrypted data: {:?}", String::from_utf8_lossy(&decrypted));
@@ -248,7 +301,6 @@ fn fixk(k: &[u32]) -> [u32; 4] {
 }
 
 #[test]
-#[ignore]
 fn xxtea_1() {
     let starting = "Hellouw".as_bytes();
 
@@ -264,7 +316,6 @@ fn xxtea_1() {
 }
 
 #[test]
-#[ignore]
 fn xxtea_2() {
     let key: &str = "SecretKey";
 
@@ -281,7 +332,6 @@ fn xxtea_2() {
 }
 
 #[test]
-#[ignore]
 fn xxtea_3() {
     let key: &str = "SecretKey";
 
