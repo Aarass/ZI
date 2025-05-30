@@ -748,7 +748,7 @@ impl State {
                                 }
                             };
 
-                            let hash = hash::hash_file(&encrypted_file_content);
+                            let hash = hash::hash_data(&encrypted_file_content);
 
                             match TcpStream::connect(address).await {
                                 Ok(mut stream) => {

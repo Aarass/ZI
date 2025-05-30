@@ -125,11 +125,6 @@ impl Enigma {
     }
 }
 
-#[test]
-fn to_ascii_lowercase() {
-    println!("{}", "a b".to_ascii_lowercase());
-}
-
 impl Algorithm for Enigma {
     fn encrypt(&self, data: &[u8]) -> anyhow::Result<Vec<u8>> {
         let mut rotors = self.rotor_assembly.clone();
