@@ -24,14 +24,14 @@ impl Xxtea {
 
 impl Algorithm for Xxtea {
     fn encrypt(&self, data: &[u8]) -> anyhow::Result<Vec<u8>> {
-        let data = to_u32(&data, true);
+        let data = to_u32(data, true);
         let encrypted = encrypt_(data, &self.key);
 
         Ok(to_bytes(&encrypted, false))
     }
 
     fn decrypt(&self, data: &[u8]) -> anyhow::Result<Vec<u8>> {
-        let data = to_u32(&data, false);
+        let data = to_u32(data, false);
         let decrypted = decrypt_(data, &self.key);
 
         Ok(to_bytes(&decrypted, true))
@@ -146,14 +146,14 @@ fn encrypt_(mut v: Vec<u32>, key: &[u32; 4]) -> Vec<u32> {
 
         for p in 0..n {
             y = v[(p as usize) + 1];
-            v[p as usize] = v[p as usize].wrapping_add(mx(sum, y, z, p as u32, e, &key));
+            v[p as usize] = v[p as usize].wrapping_add(mx(sum, y, z, p, e, key));
             z = v[p as usize];
         }
 
         y = v[0];
-        v[n as usize] = v[n as usize].wrapping_add(mx(sum, y, z, n, e, &key));
+        v[n as usize] = v[n as usize].wrapping_add(mx(sum, y, z, n, e, key));
         z = v[n as usize];
-        q = q - 1;
+        q -= 1;
     }
 
     return v;
@@ -177,13 +177,13 @@ fn decrypt_(mut v: Vec<u32>, key: &[u32; 4]) -> Vec<u32> {
 
         while p > 0 {
             z = v[p - 1];
-            v[p] = v[p].wrapping_sub(mx(sum, y, z, p as u32, e, &key));
+            v[p] = v[p].wrapping_sub(mx(sum, y, z, p as u32, e, key));
             y = v[p];
-            p = p - 1;
+            p -= 1;
         }
 
         z = v[n as usize];
-        v[0] = v[0].wrapping_sub(mx(sum, y, z, 0, e, &key));
+        v[0] = v[0].wrapping_sub(mx(sum, y, z, 0, e, key));
         y = v[0];
 
         sum = sum.wrapping_sub(DELTA);
@@ -217,7 +217,7 @@ fn to_bytes(arr: &[u32], include_length: bool) -> Vec<u8> {
 
         {
             // Checking validity
-            bytes_count = bytes_count - 4;
+            bytes_count -= 4;
             assert!(!((original_length < bytes_count - 3) || (original_length > bytes_count)));
         }
 
@@ -243,7 +243,7 @@ fn to_u32(bytes: &[u8], include_length: bool) -> Vec<u32> {
     }
 
     for i in 0..length {
-        output[(i >> 2) as usize] |= (bytes[i as usize] as u32) << ((i & 3) << 3) as u32;
+        output[(i >> 2) as usize] |= (bytes[i as usize] as u32) << ((i & 3) << 3);
     }
 
     return output;

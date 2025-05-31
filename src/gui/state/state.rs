@@ -304,7 +304,7 @@ impl State {
                                 Ok(a) => a,
                                 Err(err) => {
                                     push_toast(&toasts, &format!("{}", err), Severity::Error);
-                                    return ();
+                                    return ;
                                 }
                             };
 
@@ -411,7 +411,7 @@ impl State {
                         async move {
                             match process_file(
                                 &file_path,
-                                &alg.deref(),
+                                alg.deref(),
                                 Operation::Encrypt,
                                 &dest_dir,
                             )
@@ -467,7 +467,7 @@ impl State {
                         async move {
                             match process_file(
                                 &file_path,
-                                &alg.deref(),
+                                alg.deref(),
                                 Operation::Decrypt,
                                 &dest_dir,
                             )
@@ -582,7 +582,7 @@ impl State {
                                 Err(err) => {
                                     eprintln!("Error opening the file when trying to send it over tcp: {:?}", err);
                                     push_toast(&toasts, "Couldn't open the file", Severity::Error);
-                                    return ();
+                                    return ;
                                 }
                             };
 
@@ -595,7 +595,7 @@ impl State {
                                 Err(err) => {
                                     eprintln!("Error encoding file name len-prefix {:?}", err);
                                     push_toast(&toasts, "Error", Severity::Error);
-                                    return ();
+                                    return ;
                                 }
                             };
                             let file_name_prefix = &file_name_leb128_buf[..file_name_leb128_bytes];
@@ -605,7 +605,7 @@ impl State {
                                 Err(err) => {
                                     eprintln!("Error trying to read file metadata: {:?}", err);
                                     push_toast(&toasts, "Error", Severity::Error);
-                                    return ();
+                                    return ;
                                 }
                             };
 
@@ -616,7 +616,7 @@ impl State {
                                 Err(err) => {
                                     eprintln!("Error reading the file when trying to send it over tcp: {:?}", err);
                                     push_toast(&toasts, "Couldn't read the file", Severity::Error);
-                                    return ();
+                                    return ;
                                 }
                             };
 
@@ -625,7 +625,7 @@ impl State {
                                 Err(err) => {
                                     eprintln!("Error encrypting file content: {:?}", err);
                                     push_toast(&toasts, "Error", Severity::Error);
-                                    return ();
+                                    return ;
                                 }
                             };
 
@@ -651,7 +651,7 @@ impl State {
                                                 "An error occurred while sending data",
                                                 Severity::Error,
                                             );
-                                            return ();
+                                            return ;
                                         }
                                     };
 
@@ -666,7 +666,7 @@ impl State {
                                                 "An error occurred while sending data",
                                                 Severity::Error,
                                             );
-                                            return ();
+                                            return ;
                                         }
                                     };
 
@@ -681,7 +681,7 @@ impl State {
                                                 "An error occurred while sending data",
                                                 Severity::Error,
                                             );
-                                            return ();
+                                            return ;
                                         }
                                     };
 
@@ -697,7 +697,7 @@ impl State {
                                                 "An error occurred while sending data",
                                                 Severity::Error,
                                             );
-                                            return ();
+                                            return ;
                                         }
                                     }
 
@@ -715,7 +715,7 @@ impl State {
                                                 "An error occurred while sending data",
                                                 Severity::Error,
                                             );
-                                            return ();
+                                            return ;
                                         }
                                     }
 
@@ -733,7 +733,7 @@ impl State {
                                                 "An error occurred while sending data",
                                                 Severity::Error,
                                             );
-                                            return ();
+                                            return ;
                                         }
                                     };
 
@@ -767,7 +767,7 @@ impl State {
                                         "Failed to establish a connection",
                                         Severity::Error,
                                     );
-                                    return ();
+                                    return ;
                                 }
                             };
                         },
@@ -824,7 +824,7 @@ impl State {
                             Err(err) => {
                                 println!("Couldn't start listening: {:?}", err);
                                 push_toast(&toasts, "Couldn't start listening", Severity::Error);
-                                return ();
+                                return ;
                             }
                         };
 
@@ -864,7 +864,7 @@ impl State {
                                             "An error occurred while fetching data",
                                             Severity::Error,
                                         );
-                                        return ();
+                                        return ;
                                     }
                                 };
 
@@ -879,7 +879,7 @@ impl State {
                                                 "An error occurred while extracting data",
                                                 Severity::Error,
                                             );
-                                            return ();
+                                            return ;
                                         }
                                     };
 
@@ -904,7 +904,7 @@ impl State {
                                             "An error occurred while extracting data",
                                             Severity::Error,
                                         );
-                                        return ();
+                                        return ;
                                     }
                                 };
 
@@ -920,7 +920,7 @@ impl State {
                                             "An error occurred while extracting data",
                                             Severity::Error,
                                         );
-                                        return ();
+                                        return ;
                                     }
                                 };
                                 println!("File name: {:}", file_name);
@@ -937,7 +937,7 @@ impl State {
                                             "An error occurred while extracting data",
                                             Severity::Error,
                                         );
-                                        return ();
+                                        return ;
                                     }
                                 };
                                 println!("Content lenght: {:}", file_len);
@@ -954,7 +954,7 @@ impl State {
                                             "An error occurred while extracting data",
                                             Severity::Error,
                                         );
-                                        return ();
+                                        return ;
                                     }
                                 };
                                 println!("Hash lenght: {:}", hash_len);
@@ -969,7 +969,7 @@ impl State {
                                             "An error occurred while extracting data",
                                             Severity::Error,
                                         );
-                                        return ();
+                                        return ;
                                     }
                                 };
 
@@ -989,7 +989,7 @@ impl State {
                                             "An error occurred while extracting data",
                                             Severity::Error,
                                         );
-                                        return ();
+                                        return ;
                                     }
                                 };
 
@@ -1020,7 +1020,7 @@ impl State {
                                     Err(err) => {
                                         eprintln!("Error decrypting file content: {:?}", err);
                                         push_toast(&toasts, "Error", Severity::Error);
-                                        return ();
+                                        return ;
                                     }
                                 };
 

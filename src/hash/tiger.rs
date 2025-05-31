@@ -18,7 +18,7 @@ pub fn hash_data(data: &[u8]) -> Vec<u8> {
         match chunk.len() {
             0..=55 => {
                 let padded_chunk: Vec<u8> = chunk
-                    .into_iter()
+                    .iter()
                     .copied()
                     .chain(std::iter::once(one))
                     .chain(std::iter::repeat(zero))
@@ -30,7 +30,7 @@ pub fn hash_data(data: &[u8]) -> Vec<u8> {
             }
             56..64 => {
                 let padded_chunk: Vec<u8> = chunk
-                    .into_iter()
+                    .iter()
                     .copied()
                     .chain(std::iter::once(one))
                     .chain(std::iter::repeat(zero))
@@ -57,7 +57,7 @@ pub fn hash_data(data: &[u8]) -> Vec<u8> {
     if data.len() % 64 == 0 {
         let padded_chunk: Vec<u8> = std::iter::once(one)
             .chain(std::iter::repeat_n(zero, 55))
-            .chain(bit_len.into_iter())
+            .chain(bit_len)
             .collect();
 
         s = compress(s, &padded_chunk.try_into().unwrap());

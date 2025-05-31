@@ -9,7 +9,7 @@ impl Rotor {
     pub fn get_output(&self, letter: u8) -> u8 {
         assert!(letter.is_ascii_lowercase());
 
-        let index = letter - ('a' as u8);
+        let index = letter - b'a';
         let index = (index as usize + self.position) % 26;
 
         return self.wiring[index];
@@ -19,9 +19,9 @@ impl Rotor {
         assert!(letter.is_ascii_lowercase());
 
         let index = self.wiring.iter().position(|el| *el == letter).unwrap();
-        let index = (index as usize + (26 - self.position % 26)) % 26;
+        let index = (index + (26 - self.position % 26)) % 26;
 
-        return ('a' as u8) + (index as u8);
+        return b'a' + (index as u8);
     }
 
     pub fn is_aligned(&self) -> bool {

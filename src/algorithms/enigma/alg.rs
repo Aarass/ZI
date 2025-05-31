@@ -19,21 +19,21 @@ impl Enigma {
         if is_ok {
             Ok(Enigma {
                 reflector: Reflector {
-                    wiring: utils::to_u8_array_26(&args.refl_wiring.as_ref().unwrap()),
+                    wiring: utils::to_u8_array_26(args.refl_wiring.as_ref().unwrap()),
                 },
                 rotor_assembly: RotorAssembly::new([
                     Rotor {
-                        wiring: utils::to_u8_array_26(&args.rot1_wiring.as_ref().unwrap()),
+                        wiring: utils::to_u8_array_26(args.rot1_wiring.as_ref().unwrap()),
                         notch_position: args.rot1_notch.as_ref().unwrap().parse().unwrap(),
                         position: args.rot1_position.as_ref().unwrap().parse().unwrap(),
                     },
                     Rotor {
-                        wiring: utils::to_u8_array_26(&args.rot2_wiring.as_ref().unwrap()),
+                        wiring: utils::to_u8_array_26(args.rot2_wiring.as_ref().unwrap()),
                         notch_position: args.rot2_notch.as_ref().unwrap().parse().unwrap(),
                         position: args.rot2_position.as_ref().unwrap().parse().unwrap(),
                     },
                     Rotor {
-                        wiring: utils::to_u8_array_26(&args.rot3_wiring.as_ref().unwrap()),
+                        wiring: utils::to_u8_array_26(args.rot3_wiring.as_ref().unwrap()),
                         notch_position: args.rot3_notch.as_ref().unwrap().parse().unwrap(),
                         position: args.rot3_position.as_ref().unwrap().parse().unwrap(),
                     },
@@ -147,9 +147,9 @@ impl Algorithm for Enigma {
                 let l3 = reflector.reflect(l2);
                 let l4 = rotors.get_output_inverse(l3);
 
-                let l5 = plugboard.get_output(l4);
+                
 
-                l5
+                plugboard.get_output(l4)
             })
             .collect())
     }

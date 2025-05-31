@@ -21,8 +21,8 @@ impl Plugboard {
             let pair = pair.to_ascii_lowercase();
             let mut chars = pair.chars();
 
-            let first = (chars.next().unwrap() as u8) - ('a' as u8);
-            let second = (chars.next().unwrap() as u8) - ('a' as u8);
+            let first = (chars.next().unwrap() as u8) - b'a';
+            let second = (chars.next().unwrap() as u8) - b'a';
 
             wiring.swap(first as usize, second as usize);
         });
@@ -33,7 +33,7 @@ impl Plugboard {
     pub fn get_output(&self, letter: u8) -> u8 {
         assert!(letter.is_ascii_lowercase());
 
-        let index = letter - ('a' as u8);
+        let index = letter - b'a';
 
         return self.wiring[index as usize];
     }

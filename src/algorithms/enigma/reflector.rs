@@ -7,7 +7,7 @@ impl Reflector {
     pub fn reflect(&self, letter: u8) -> u8 {
         assert!(letter.is_ascii_lowercase());
 
-        let index = (letter - ('a' as u8)) as usize;
+        let index = (letter - b'a') as usize;
         assert!(index < 26);
 
         return self.wiring[index];
