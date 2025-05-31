@@ -7,7 +7,7 @@ use super::rotor::Rotor;
 // }
 
 #[derive(Clone)]
-pub struct RotorAssembly([Rotor; 3]);
+pub struct RotorAssembly(pub(super) [Rotor; 3]);
 
 impl RotorAssembly {
     pub fn new(rotors: [Rotor; 3]) -> RotorAssembly {

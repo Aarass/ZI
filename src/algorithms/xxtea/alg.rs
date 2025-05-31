@@ -1,48 +1,47 @@
+use crate::algorithms::Algorithm;
+use crate::gui::state::args::{XxteaArgs, XxteaCfbArgs};
 use anyhow::{anyhow, Ok};
-
-use crate::{Algorithm, XxteaArgs, XxteaCfbArgs};
 
 const DELTA: u32 = 0x9e3779b9;
 
-#[allow(clippy::upper_case_acronyms)]
 pub struct Xxtea {
-    key: String,
+    key: [u32; 4],
 }
 
 impl Xxtea {
     pub fn try_new(args: &XxteaArgs) -> anyhow::Result<Xxtea> {
-        match &args.key {
-            Some(key) => {
-                return Ok(Xxtea {
-                    key: key.to_owned(),
-                });
-            }
-            None => Err(anyhow!("Validation failed")),
-        }
+        return Ok(Xxtea {
+            key: fix_key(&to_u32(
+                args.key
+                    .as_ref()
+                    .ok_or(anyhow!("Validation failed"))?
+                    .as_bytes(),
+                false,
+            )),
+        });
     }
 }
 
 impl Algorithm for Xxtea {
     fn encrypt(&self, data: &[u8]) -> anyhow::Result<Vec<u8>> {
-        let key = self.key.as_bytes();
-        let res = to_bytes(&encrypt_(to_u32(&data, true), &to_u32(&key, false)), false);
+        let data = to_u32(&data, true);
+        let encrypted = encrypt_(data, &self.key);
 
-        Ok(res)
+        Ok(to_bytes(&encrypted, false))
     }
 
     fn decrypt(&self, data: &[u8]) -> anyhow::Result<Vec<u8>> {
-        let key = self.key.as_bytes();
-        let res = to_bytes(&decrypt_(to_u32(&data, false), &to_u32(&key, false)), true);
+        let data = to_u32(&data, false);
+        let decrypted = decrypt_(data, &self.key);
 
-        Ok(res)
+        Ok(to_bytes(&decrypted, true))
     }
 }
 
-#[allow(clippy::upper_case_acronyms)]
 pub struct XxteaCfb {
     iv: Vec<u8>,
     block_size: usize,
-    key: String,
+    key: [u32; 4],
 }
 
 impl XxteaCfb {
@@ -58,10 +57,9 @@ impl XxteaCfb {
         }
 
         let iv = args.iv.as_ref().unwrap().to_owned().into_bytes();
-        let key = args.key.as_ref().unwrap();
 
-        if iv.is_empty() || key.is_empty() {
-            return Err(anyhow!("IV or Key is empty"));
+        if iv.is_empty() {
+            return Err(anyhow!("IV is empty"));
         }
 
         if iv.len() < block_size {
@@ -71,22 +69,25 @@ impl XxteaCfb {
         return Ok(XxteaCfb {
             iv,
             block_size,
-            key: key.to_owned(),
+            key: fix_key(&to_u32(
+                args.key
+                    .as_ref()
+                    .ok_or(anyhow!("Validation failed"))?
+                    .as_bytes(),
+                false,
+            )),
         });
     }
 }
 
 impl Algorithm for XxteaCfb {
     fn encrypt(&self, data: &[u8]) -> anyhow::Result<Vec<u8>> {
-        let key = self.key.as_bytes();
-
         let mut res = Vec::with_capacity(data.len());
 
         let mut prev = self.iv[0..self.block_size].to_vec();
 
         for plainblock in data.chunks(self.block_size) {
-            let intermidiate =
-                to_bytes(&encrypt_(to_u32(&prev, false), &to_u32(&key, false)), false);
+            let intermidiate = to_bytes(&encrypt_(to_u32(&prev, false), &self.key), false);
 
             assert_eq!(intermidiate.len(), self.block_size);
 
@@ -104,15 +105,12 @@ impl Algorithm for XxteaCfb {
     }
 
     fn decrypt(&self, data: &[u8]) -> anyhow::Result<Vec<u8>> {
-        let key = self.key.as_bytes();
-
         let mut res = Vec::with_capacity(data.len());
 
         let mut prev = self.iv[0..self.block_size].to_vec();
 
         for cipherblock in data.chunks(self.block_size) {
-            let intermidiate =
-                to_bytes(&encrypt_(to_u32(&prev, false), &to_u32(&key, false)), false);
+            let intermidiate = to_bytes(&encrypt_(to_u32(&prev, false), &self.key), false);
 
             assert_eq!(intermidiate.len(), self.block_size);
 
@@ -130,31 +128,8 @@ impl Algorithm for XxteaCfb {
     }
 }
 
-#[test]
-fn cfb() {
-    let alg = XxteaCfb::try_new(&XxteaCfbArgs {
-        iv: Some("asdfas34asdfasdfasdkljsdklfj".to_owned()),
-        block_size: Some("8".to_owned()),
-        key: Some("SecretKey".to_owned()),
-    })
-    .unwrap();
-
-    let data = "Hellouw there".as_bytes();
-
-    let encrypted = alg.encrypt(data).unwrap();
-
-    println!("Encrypted data: {:?}", encrypted);
-    println!("Encrypted data: {:?}", String::from_utf8_lossy(&encrypted));
-
-    let decrypted = alg.decrypt(&encrypted).unwrap();
-
-    println!("Decrypted data: {:?}", decrypted);
-    println!("Decrypted data: {:?}", String::from_utf8_lossy(&decrypted));
-}
-
-fn encrypt_(mut v: Vec<u32>, k: &[u32]) -> Vec<u32> {
+fn encrypt_(mut v: Vec<u32>, key: &[u32; 4]) -> Vec<u32> {
     let length: u32 = v.len() as u32;
-    let key = fixk(k);
 
     let n: u32 = length - 1;
 
@@ -184,9 +159,8 @@ fn encrypt_(mut v: Vec<u32>, k: &[u32]) -> Vec<u32> {
     return v;
 }
 
-fn decrypt_(mut v: Vec<u32>, k: &[u32]) -> Vec<u32> {
+fn decrypt_(mut v: Vec<u32>, key: &[u32; 4]) -> Vec<u32> {
     let length: u32 = v.len() as u32;
-    let key = fixk(k);
 
     let n: u32 = length - 1;
 
@@ -218,45 +192,42 @@ fn decrypt_(mut v: Vec<u32>, k: &[u32]) -> Vec<u32> {
     return v;
 }
 
-pub fn encrypt(data: &[u8], key: &str) -> Vec<u8> {
-    let key = key.as_bytes();
-    to_bytes(&encrypt_(to_u32(&data, true), &to_u32(&key, false)), false)
+fn mx(sum: u32, y: u32, z: u32, p: u32, e: u32, k: &[u32; 4]) -> u32 {
+    ((z >> 5 ^ y << 2).wrapping_add(y >> 3 ^ z << 4))
+        ^ ((sum ^ y).wrapping_add(k[(p & 3 ^ e) as usize] ^ z))
 }
 
-pub fn decrypt(data: &[u8], key: &str) -> Vec<u8> {
-    let key = key.as_bytes();
-    to_bytes(&decrypt_(to_u32(&data, false), &to_u32(&key, false)), true)
-}
+fn fix_key(key: &[u32]) -> [u32; 4] {
+    let mut out = [0u32; 4];
 
-pub fn encrypt_raw(data: &[u8], key: &str) -> Vec<u8> {
-    let key = key.as_bytes();
-    to_bytes(&encrypt_(to_u32(&data, false), &to_u32(&key, false)), false)
-}
-
-pub fn decrypt_raw(data: &[u8], key: &str) -> Vec<u8> {
-    let key = key.as_bytes();
-    to_bytes(&decrypt_(to_u32(&data, false), &to_u32(&key, false)), false)
-}
-
-fn to_bytes(v: &[u32], include_length: bool) -> Vec<u8> {
-    let length: u32 = v.len() as u32;
-
-    let mut n: u32 = length << 2;
-
-    if include_length {
-        let m: u32 = v[length as usize - 1];
-
-        n = n - 4;
-
-        assert!(!((m < n - 3) || (m > n)));
-
-        n = m;
+    for (i, &val) in key.iter().take(4).enumerate() {
+        out[i] = val;
     }
 
-    let mut bytes: Vec<u8> = vec![0; n as usize];
+    return out;
+}
 
-    for i in 0..n {
-        bytes[i as usize] = (v[(i >> 2) as usize] >> ((i & 3) << 3)) as u8;
+fn to_bytes(arr: &[u32], include_length: bool) -> Vec<u8> {
+    let length: u32 = arr.len() as u32;
+
+    let mut bytes_count = length * 4;
+
+    if include_length {
+        let original_length: u32 = arr[length as usize - 1];
+
+        {
+            // Checking validity
+            bytes_count = bytes_count - 4;
+            assert!(!((original_length < bytes_count - 3) || (original_length > bytes_count)));
+        }
+
+        bytes_count = original_length;
+    }
+
+    let mut bytes: Vec<u8> = vec![0; bytes_count as usize];
+
+    for i in 0..bytes_count {
+        bytes[i as usize] = (arr[(i >> 2) as usize] >> ((i & 3) << 3)) as u8;
     }
 
     return bytes;
@@ -264,40 +235,18 @@ fn to_bytes(v: &[u32], include_length: bool) -> Vec<u8> {
 
 fn to_u32(bytes: &[u8], include_length: bool) -> Vec<u32> {
     let length: u32 = bytes.len() as u32;
+    let n = length.div_ceil(4);
 
-    let mut n: u32 = length >> 2;
-
-    if length & 3 != 0 {
-        n = n + 1;
-    }
-
-    let mut v;
-
+    let mut output = vec![0; n as usize + if include_length { 1 } else { 0 }];
     if include_length {
-        v = vec![0; n as usize + 1];
-        v[n as usize] = length;
-    } else {
-        v = vec![0; n as usize];
+        output[n as usize] = length;
     }
 
     for i in 0..length {
-        v[(i >> 2) as usize] |= (bytes[i as usize] as u32) << ((i & 3) << 3) as u32;
+        output[(i >> 2) as usize] |= (bytes[i as usize] as u32) << ((i & 3) << 3) as u32;
     }
 
-    return v;
-}
-
-fn mx(sum: u32, y: u32, z: u32, p: u32, e: u32, k: &[u32; 4]) -> u32 {
-    ((z >> 5 ^ y << 2).wrapping_add(y >> 3 ^ z << 4))
-        ^ ((sum ^ y).wrapping_add(k[(p & 3 ^ e) as usize] ^ z))
-}
-
-fn fixk(k: &[u32]) -> [u32; 4] {
-    let mut out = [0u32; 4];
-    for (i, &val) in k.iter().take(4).enumerate() {
-        out[i] = val;
-    }
-    out
+    return output;
 }
 
 #[test]
@@ -315,39 +264,113 @@ fn xxtea_1() {
     assert_ne!(starting, bytes);
 }
 
-#[test]
-fn xxtea_2() {
-    let key: &str = "SecretKey";
+#[cfg(test)]
+mod tests {
+    use super::{decrypt_, encrypt_, fix_key, to_bytes, to_u32, Xxtea, XxteaCfb};
+    use crate::algorithms::Algorithm;
+    use crate::gui::state::args::{XxteaArgs, XxteaCfbArgs};
 
-    let data: [u8; 5] = [11, 13, 0, 14, 15];
-    println!("Data: {:?}", data);
+    #[test]
+    fn xxtea_2() {
+        fn encrypt_raw(data: &[u8], key: &str) -> Vec<u8> {
+            let key = fix_key(&to_u32(key.as_bytes(), false));
 
-    let encrypted_data = encrypt_raw(&data, key);
-    println!("Encrypted data: {:?}", encrypted_data);
+            to_bytes(&encrypt_(to_u32(&data, false), &key), false)
+        }
 
-    let decrypted_data = decrypt_raw(&encrypted_data, key);
-    println!("Decrypted data: {:?}", decrypted_data);
+        fn decrypt_raw(data: &[u8], key: &str) -> Vec<u8> {
+            let key = fix_key(&to_u32(key.as_bytes(), false));
+            to_bytes(&decrypt_(to_u32(&data, false), &key), false)
+        }
 
-    assert!(data.iter().eq(decrypted_data[0..data.len()].iter()));
-}
+        let key: &str = "SecretKey";
 
-#[test]
-fn xxtea_3() {
-    let key: &str = "SecretKey";
+        let data: [u8; 5] = [11, 13, 0, 14, 15];
+        println!("Data: {:?}", data);
+        let encrypted_data = encrypt_raw(&data, key);
+        println!("Encrypted data: {:?}", encrypted_data);
 
-    let data = "Hellouw";
-    println!("Data: {:?}", data);
+        let decrypted_data = decrypt_raw(&encrypted_data, key);
+        println!("Decrypted data: {:?}", decrypted_data);
 
-    let encrypted_data = encrypt(&data.as_bytes(), key);
-    println!("Encrypted data: {:?}", encrypted_data);
-    println!(
-        "Encrypted data: {:?}",
-        String::from_utf8_lossy(&encrypted_data)
-    );
+        assert!(data.iter().eq(decrypted_data[0..data.len()].iter()));
+    }
 
-    let decrypted_data = decrypt(&encrypted_data, key);
-    println!("Decrypted data: {:?}", decrypted_data);
+    #[test]
+    fn xxtea_3() {
+        fn encrypt(data: &[u8], key: &str) -> Vec<u8> {
+            let key = fix_key(&to_u32(key.as_bytes(), false));
+            to_bytes(&encrypt_(to_u32(&data, true), &key), false)
+        }
 
-    let result = String::from_utf8(decrypted_data).unwrap();
-    assert!(data.eq(&result));
+        fn decrypt(data: &[u8], key: &str) -> Vec<u8> {
+            let key = fix_key(&to_u32(key.as_bytes(), false));
+            to_bytes(&decrypt_(to_u32(&data, false), &key), true)
+        }
+
+        let key: &str = "SecretKey";
+
+        let data = "Hellouw";
+        println!("Data: {:?}", data);
+
+        let encrypted_data = encrypt(&data.as_bytes(), key);
+        println!("Encrypted data: {:?}", encrypted_data);
+        println!(
+            "Encrypted data: {:?}",
+            String::from_utf8_lossy(&encrypted_data)
+        );
+
+        let decrypted_data = decrypt(&encrypted_data, key);
+        println!("Decrypted data: {:?}", decrypted_data);
+
+        let result = String::from_utf8(decrypted_data).unwrap();
+
+        assert_eq!(data, result)
+    }
+
+    #[test]
+    fn xxtea_full() {
+        let alg = Xxtea::try_new(&XxteaArgs {
+            key: Some("SecretKey".to_owned()),
+        })
+        .unwrap();
+
+        let data = "Hellouw there".as_bytes();
+
+        let encrypted = alg.encrypt(data).unwrap();
+
+        println!("Encrypted data: {:?}", encrypted);
+        println!("Encrypted data: {:?}", String::from_utf8_lossy(&encrypted));
+
+        let decrypted = alg.decrypt(&encrypted).unwrap();
+
+        println!("Decrypted data: {:?}", decrypted);
+        println!("Decrypted data: {:?}", String::from_utf8_lossy(&decrypted));
+
+        assert_eq!(data, decrypted)
+    }
+
+    #[test]
+    fn cfb() {
+        let alg = XxteaCfb::try_new(&XxteaCfbArgs {
+            iv: Some("asdfas34asdfasdfasdkljsdklfj".to_owned()),
+            block_size: Some("8".to_owned()),
+            key: Some("SecretKey".to_owned()),
+        })
+        .unwrap();
+
+        let data = "Hellouw there".as_bytes();
+
+        let encrypted = alg.encrypt(data).unwrap();
+
+        println!("Encrypted data: {:?}", encrypted);
+        println!("Encrypted data: {:?}", String::from_utf8_lossy(&encrypted));
+
+        let decrypted = alg.decrypt(&encrypted).unwrap();
+
+        println!("Decrypted data: {:?}", decrypted);
+        println!("Decrypted data: {:?}", String::from_utf8_lossy(&decrypted));
+
+        assert_eq!(data, decrypted)
+    }
 }
