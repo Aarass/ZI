@@ -25,16 +25,19 @@ impl Enigma {
                     Rotor {
                         wiring: utils::to_u8_array_26(args.rot1_wiring.as_ref().unwrap()),
                         notch_position: args.rot1_notch.as_ref().unwrap().parse().unwrap(),
+                        ringstellung: args.rot1_ringstellung.as_ref().unwrap().parse().unwrap(),
                         position: args.rot1_position.as_ref().unwrap().parse().unwrap(),
                     },
                     Rotor {
                         wiring: utils::to_u8_array_26(args.rot2_wiring.as_ref().unwrap()),
                         notch_position: args.rot2_notch.as_ref().unwrap().parse().unwrap(),
+                        ringstellung: args.rot2_ringstellung.as_ref().unwrap().parse().unwrap(),
                         position: args.rot2_position.as_ref().unwrap().parse().unwrap(),
                     },
                     Rotor {
                         wiring: utils::to_u8_array_26(args.rot3_wiring.as_ref().unwrap()),
                         notch_position: args.rot3_notch.as_ref().unwrap().parse().unwrap(),
+                        ringstellung: args.rot3_ringstellung.as_ref().unwrap().parse().unwrap(),
                         position: args.rot3_position.as_ref().unwrap().parse().unwrap(),
                     },
                 ]),
@@ -49,18 +52,19 @@ impl Enigma {
         if args.refl_wiring.is_none()
             || args.rot1_wiring.is_none()
             || args.rot1_notch.is_none()
+            || args.rot1_ringstellung.is_none()
             || args.rot1_position.is_none()
             || args.rot2_wiring.is_none()
             || args.rot2_notch.is_none()
+            || args.rot2_ringstellung.is_none()
             || args.rot2_position.is_none()
             || args.rot3_wiring.is_none()
             || args.rot3_notch.is_none()
+            || args.rot3_ringstellung.is_none()
             || args.rot3_position.is_none()
         {
             return false;
         }
-
-        println!("All are some");
 
         if !utils::is_shuffled_alphabet(args.refl_wiring.as_ref().unwrap()) {
             return false;
@@ -76,8 +80,6 @@ impl Enigma {
             return false;
         }
 
-        println!("4 shuffled alphabets");
-
         if !is_index(args.rot1_notch.as_ref().unwrap()) {
             return false;
         }
@@ -87,8 +89,6 @@ impl Enigma {
         if !is_index(args.rot3_notch.as_ref().unwrap()) {
             return false;
         }
-
-        println!("notches");
 
         if !is_index(args.rot1_position.as_ref().unwrap()) {
             return false;
@@ -100,7 +100,15 @@ impl Enigma {
             return false;
         }
 
-        println!("positions");
+        if !is_index(args.rot1_ringstellung.as_ref().unwrap()) {
+            return false;
+        }
+        if !is_index(args.rot2_ringstellung.as_ref().unwrap()) {
+            return false;
+        }
+        if !is_index(args.rot3_ringstellung.as_ref().unwrap()) {
+            return false;
+        }
 
         fn is_index(s: &str) -> bool {
             match s.parse::<u8>() {
@@ -118,8 +126,6 @@ impl Enigma {
         {
             return false;
         }
-
-        println!("plugboard");
 
         true
     }
@@ -147,8 +153,6 @@ impl Algorithm for Enigma {
                 let l3 = reflector.reflect(l2);
                 let l4 = rotors.get_output_inverse(l3);
 
-                
-
                 plugboard.get_output(l4)
             })
             .collect())
@@ -171,6 +175,7 @@ mod tests {
     use crate::algorithms::enigma::{
         alg::Enigma, reflector::Reflector, rotor::Rotor, rotor_assembly::RotorAssembly, utils,
     };
+    use crate::algorithms::Algorithm;
     use crate::gui::state::args::EnigmaArgs;
 
     fn expected_output(input: &[u8]) -> Vec<u8> {
@@ -203,6 +208,7 @@ mod tests {
         let rotor = Rotor {
             wiring: utils::to_u8_array_26("ekmflgdqvzntowyhxuspaibrcj"),
             notch_position: 0,
+            ringstellung: 0,
             position: 0,
         };
 
@@ -218,6 +224,7 @@ mod tests {
         let mut rotor = Rotor {
             wiring: utils::to_u8_array_26("ekmflgdqvzntowyhxuspaibrcj"),
             notch_position: 0,
+            ringstellung: 0,
             position: 1,
         };
 
@@ -240,16 +247,19 @@ mod tests {
             Rotor {
                 wiring: utils::to_u8_array_26("ekmflgdqvzntowyhxuspaibrcj"),
                 notch_position: 8,
+                ringstellung: 0,
                 position: 0,
             },
             Rotor {
                 wiring: utils::to_u8_array_26("ajdksiruxblhwtmcqgznpyfvoe"),
                 notch_position: 8,
+                ringstellung: 0,
                 position: 0,
             },
             Rotor {
                 wiring: utils::to_u8_array_26("bdfhjlcprtxvznyeiwgakmusqo"),
                 notch_position: 0,
+                ringstellung: 0,
                 position: 0,
             },
         ]);
@@ -273,6 +283,7 @@ mod tests {
         let mut rotor = Rotor {
             wiring: utils::to_u8_array_26("ekmflgdqvzntowyhxuspaibrcj"),
             notch_position: 0,
+            ringstellung: 0,
             position: 0,
         };
 
@@ -335,16 +346,19 @@ mod tests {
             Rotor {
                 wiring: utils::to_u8_array_26("bdfhjlcprtxvznyeiwgakmusqo"),
                 notch_position: 0,
+                ringstellung: 0,
                 position: 0,
             },
             Rotor {
                 wiring: utils::to_u8_array_26("ajdksiruxblhwtmcqgznpyfvoe"),
                 notch_position: 8,
+                ringstellung: 0,
                 position: 0,
             },
             Rotor {
                 wiring: utils::to_u8_array_26("ekmflgdqvzntowyhxuspaibrcj"),
                 notch_position: 8,
+                ringstellung: 0,
                 position: 0,
             },
         ]);
@@ -364,16 +378,19 @@ mod tests {
             Rotor {
                 wiring: utils::to_u8_array_26("ekmflgdqvzntowyhxuspaibrcj"),
                 notch_position: 8,
+                ringstellung: 0,
                 position: 0,
             },
             Rotor {
                 wiring: utils::to_u8_array_26("ajdksiruxblhwtmcqgznpyfvoe"),
                 notch_position: 8,
+                ringstellung: 0,
                 position: 0,
             },
             Rotor {
                 wiring: utils::to_u8_array_26("bdfhjlcprtxvznyeiwgakmusqo"),
                 notch_position: 0,
+                ringstellung: 0,
                 position: 0,
             },
         ]);

@@ -4,14 +4,17 @@ pub struct EnigmaArgs {
 
     pub rot1_wiring: Option<String>,
     pub rot1_notch: Option<String>,
+    pub rot1_ringstellung: Option<String>,
     pub rot1_position: Option<String>,
 
     pub rot2_wiring: Option<String>,
     pub rot2_notch: Option<String>,
+    pub rot2_ringstellung: Option<String>,
     pub rot2_position: Option<String>,
 
     pub rot3_wiring: Option<String>,
     pub rot3_notch: Option<String>,
+    pub rot3_ringstellung: Option<String>,
     pub rot3_position: Option<String>,
 
     pub plugboard: Option<String>,
@@ -23,12 +26,15 @@ impl Default for EnigmaArgs {
             refl_wiring: Some("yruhqsldpxngokmiebfzcwvjat".to_owned()),
             rot1_wiring: Some("ekmflgdqvzntowyhxuspaibrcj".to_owned()),
             rot1_notch: Some("8".to_owned()),
+            rot1_ringstellung: Some("0".to_owned()),
             rot1_position: Some("0".to_owned()),
             rot2_wiring: Some("ajdksiruxblhwtmcqgznpyfvoe".to_owned()),
             rot2_notch: Some("8".to_owned()),
+            rot2_ringstellung: Some("0".to_owned()),
             rot2_position: Some("0".to_owned()),
             rot3_wiring: Some("bdfhjlcprtxvznyeiwgakmusqo".to_owned()),
             rot3_notch: Some("0".to_owned()),
+            rot3_ringstellung: Some("0".to_owned()),
             rot3_position: Some("0".to_owned()),
             plugboard: Some("po ml iu kj nh yt gb vf re dc".to_owned()),
         }

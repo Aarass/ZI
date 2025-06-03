@@ -26,8 +26,8 @@ pub enum Severity {
     Info,
 }
 
-const SHORT_TOAST_DURATION: Duration = Duration::from_secs(5);
-const LONG_TOAST_DURATION: Duration = Duration::from_secs(10);
+const SHORT_TOAST_DURATION: Duration = Duration::from_secs(10);
+const LONG_TOAST_DURATION: Duration = Duration::from_secs(15);
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 

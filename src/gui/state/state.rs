@@ -7,8 +7,8 @@ use crate::utils::{get_algorithm, get_dir_path, get_file_path, get_new_file_path
 use super::fsw_state::FSWState;
 use super::manual_state::ManualState;
 use super::messages::{
-    AlgorithmSettingsMessage, EnigmaSettingsMesasge, FSWPageMessage, ManualPageMessage, Message,
-    NavigationMessage, TcpPageMessage, XxteaCfbSettingsMesasge, XxteaSettingsMesasge,
+    AlgorithmSettingsMessage, EnigmaSettingsMessage, FSWPageMessage, ManualPageMessage, Message,
+    NavigationMessage, TcpPageMessage, XxteaCfbSettingsMessage, XxteaSettingsMessage,
 };
 use super::settings_state::SettingsState;
 use super::tcp_state::{TcpMode, TcpState};
@@ -21,9 +21,7 @@ use std::ops::Deref;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use iced::futures::SinkExt;
 use iced::{
-    stream,
     widget::{column, container, horizontal_rule, horizontal_space, row, stack},
     Alignment, Element, Length, Subscription, Task,
 };
@@ -236,47 +234,59 @@ impl State {
                 match algorithm_settings_message {
                     AlgorithmSettingsMessage::Enigma(enigma_settings_mesasge) => {
                         match enigma_settings_mesasge {
-                            EnigmaSettingsMesasge::ReflWiringChanged(value) => {
+                            EnigmaSettingsMessage::ReflWiringChanged(value) => {
                                 self.settings.enigma_args.refl_wiring = value;
                                 Task::none()
                             }
-                            EnigmaSettingsMesasge::Rot1WiringChanged(value) => {
+                            EnigmaSettingsMessage::Rot1WiringChanged(value) => {
                                 self.settings.enigma_args.rot1_wiring = value;
                                 Task::none()
                             }
-                            EnigmaSettingsMesasge::Rot1NotchChanged(value) => {
+                            EnigmaSettingsMessage::Rot1NotchChanged(value) => {
                                 self.settings.enigma_args.rot1_notch = value;
                                 Task::none()
                             }
-                            EnigmaSettingsMesasge::Rot1PositionChanged(value) => {
+                            EnigmaSettingsMessage::Rot1RingstellungChanged(value) => {
+                                self.settings.enigma_args.rot1_ringstellung = value;
+                                Task::none()
+                            }
+                            EnigmaSettingsMessage::Rot1PositionChanged(value) => {
                                 self.settings.enigma_args.rot1_position = value;
                                 Task::none()
                             }
-                            EnigmaSettingsMesasge::Rot2WiringChanged(value) => {
+                            EnigmaSettingsMessage::Rot2WiringChanged(value) => {
                                 self.settings.enigma_args.rot2_wiring = value;
                                 Task::none()
                             }
-                            EnigmaSettingsMesasge::Rot2NotchChanged(value) => {
+                            EnigmaSettingsMessage::Rot2NotchChanged(value) => {
                                 self.settings.enigma_args.rot2_notch = value;
                                 Task::none()
                             }
-                            EnigmaSettingsMesasge::Rot2PositionChanged(value) => {
+                            EnigmaSettingsMessage::Rot2RingstellungChanged(value) => {
+                                self.settings.enigma_args.rot2_ringstellung = value;
+                                Task::none()
+                            }
+                            EnigmaSettingsMessage::Rot2PositionChanged(value) => {
                                 self.settings.enigma_args.rot2_position = value;
                                 Task::none()
                             }
-                            EnigmaSettingsMesasge::Rot3WiringChanged(value) => {
+                            EnigmaSettingsMessage::Rot3WiringChanged(value) => {
                                 self.settings.enigma_args.rot3_wiring = value;
                                 Task::none()
                             }
-                            EnigmaSettingsMesasge::Rot3NotchChanged(value) => {
+                            EnigmaSettingsMessage::Rot3NotchChanged(value) => {
                                 self.settings.enigma_args.rot3_notch = value;
                                 Task::none()
                             }
-                            EnigmaSettingsMesasge::Rot3PositionChanged(value) => {
+                            EnigmaSettingsMessage::Rot3RingstellungChanged(value) => {
+                                self.settings.enigma_args.rot3_ringstellung = value;
+                                Task::none()
+                            }
+                            EnigmaSettingsMessage::Rot3PositionChanged(value) => {
                                 self.settings.enigma_args.rot3_position = value;
                                 Task::none()
                             }
-                            EnigmaSettingsMesasge::PlugboardChanged(value) => {
+                            EnigmaSettingsMessage::PlugboardChanged(value) => {
                                 self.settings.enigma_args.plugboard = value;
                                 Task::none()
                             }
@@ -284,7 +294,7 @@ impl State {
                     }
                     AlgorithmSettingsMessage::Xxtea(xxteasettings_mesasge) => {
                         match xxteasettings_mesasge {
-                            XxteaSettingsMesasge::KeyChanged(value) => {
+                            XxteaSettingsMessage::KeyChanged(value) => {
                                 self.settings.xxtea_args.key = value;
                                 Task::none()
                             }
@@ -292,15 +302,15 @@ impl State {
                     }
                     AlgorithmSettingsMessage::XxteaCfb(xxtea_cfbsettings_mesasge) => {
                         match xxtea_cfbsettings_mesasge {
-                            XxteaCfbSettingsMesasge::KeyChanged(value) => {
+                            XxteaCfbSettingsMessage::KeyChanged(value) => {
                                 self.settings.xxtea_cfb_args.key = value;
                                 Task::none()
                             }
-                            XxteaCfbSettingsMesasge::IVChanged(value) => {
+                            XxteaCfbSettingsMessage::IVChanged(value) => {
                                 self.settings.xxtea_cfb_args.iv = value;
                                 Task::none()
                             }
-                            XxteaCfbSettingsMesasge::BlockSizeChanged(value) => {
+                            XxteaCfbSettingsMessage::BlockSizeChanged(value) => {
                                 self.settings.xxtea_cfb_args.block_size = value;
                                 Task::none()
                             }
@@ -326,8 +336,6 @@ impl State {
                 Task::none()
             }
             Message::Tick => {
-                println!("tick");
-
                 let unfiltered = self.toasts.read().unwrap();
                 let unfiltered_len = unfiltered.len();
 
@@ -810,8 +818,6 @@ impl State {
     fn tcp_start_listening(&mut self) -> Task<Message> {
         let toasts = self.toasts.clone();
 
-        // TODO
-        // UI should not allow this
         let my_port = self
             .tcp
             .my_port
@@ -825,71 +831,169 @@ impl State {
 
         let settings_pointer = self.commited_settings.clone();
 
-        let handle = tokio::spawn(async move {
-            let listener = match TcpListener::bind(format!("127.0.0.1:{:?}", my_port)).await {
-                Ok(listener) => {
-                    println!("Successfully started tcp server");
-                    listener
-                }
-                Err(err) => {
-                    println!("Couldn't start listening: {:?}", err);
-                    push_toast(&toasts, "Couldn't start listening", Severity::Error);
-                    return;
-                }
-            };
-
-            loop {
-                let (socket, addr) = match listener.accept().await {
-                    Ok(val) => val,
-                    Err(err) => {
-                        println!("Error accepting tcp connection: {:?}", err);
-                        push_toast(&toasts, "Faulty connection", Severity::Error);
-                        continue;
+        let (task, handle) = Task::perform(
+            async move {
+                let listener = match TcpListener::bind(format!("127.0.0.1:{:?}", my_port)).await {
+                    Ok(listener) => {
+                        println!("Successfully started tcp server");
+                        listener
                     }
-                };
-
-                let message = format!("Accepted connection with: {:?}", addr);
-                println!("{}", message);
-                push_toast(&toasts, &message, Severity::Info);
-
-                let toasts = toasts.clone();
-
-                let alg = match get_algorithm(&settings_pointer.read().unwrap()) {
-                    Ok(a) => Arc::new(a),
                     Err(err) => {
-                        push_toast(&toasts, &format!("{}", err), Severity::Success);
+                        println!("Couldn't start listening: {:?}", err);
+                        push_toast(&toasts, "Couldn't start listening", Severity::Error);
                         return;
                     }
                 };
 
-                let dest_dir = dest_dir.clone();
-
-                tokio::spawn(async move {
-                    let mut socket = BufReader::new(socket);
-                    match socket.fill_buf().await {
-                        Ok(v) => v,
+                loop {
+                    let (socket, addr) = match listener.accept().await {
+                        Ok(val) => val,
                         Err(err) => {
-                            println!("Error filling buffer from tcp stream: {:?}", err);
-                            push_toast(
-                                &toasts,
-                                "An error occurred while fetching data",
-                                Severity::Error,
-                            );
+                            println!("Error accepting tcp connection: {:?}", err);
+                            push_toast(&toasts, "Faulty connection", Severity::Error);
+                            continue;
+                        }
+                    };
+
+                    let message = format!("Accepted connection with: {:?}", addr);
+                    println!("{}", message);
+                    push_toast(&toasts, &message, Severity::Info);
+
+                    let toasts = toasts.clone();
+
+                    let alg = match get_algorithm(&settings_pointer.read().unwrap()) {
+                        Ok(a) => Arc::new(a),
+                        Err(err) => {
+                            push_toast(&toasts, &format!("{}", err), Severity::Success);
                             return;
                         }
                     };
 
-                    let message = "Succesffully received data";
-                    println!("{}", message);
-                    push_toast(&toasts, &message, Severity::Success);
+                    let dest_dir = dest_dir.clone();
 
-                    let file_name_len = {
-                        let mut buf = socket.buffer();
-                        let file_name_len = match leb128::read::unsigned(&mut buf) {
+                    tokio::spawn(async move {
+                        let mut socket = BufReader::new(socket);
+                        match socket.fill_buf().await {
+                            Ok(v) => v,
+                            Err(err) => {
+                                println!("Error filling buffer from tcp stream: {:?}", err);
+                                push_toast(
+                                    &toasts,
+                                    "An error occurred while fetching data",
+                                    Severity::Error,
+                                );
+                                return;
+                            }
+                        };
+
+                        let message = "Succesffully received data";
+                        println!("{}", message);
+                        push_toast(&toasts, &message, Severity::Success);
+
+                        let file_name_len = {
+                            let mut buf = socket.buffer();
+                            let file_name_len = match leb128::read::unsigned(&mut buf) {
+                                Ok(v) => v,
+                                Err(err) => {
+                                    eprintln!(
+                                    "Error occured while extracting len-prefix of file name: {:?}",
+                                    err
+                                );
+                                    push_toast(
+                                        &toasts,
+                                        "An error occurred while extracting data",
+                                        Severity::Error,
+                                    );
+                                    return;
+                                }
+                            };
+
+                            let bytes_to_consume = socket.buffer().len() - buf.len();
+                            socket.consume(bytes_to_consume);
+
+                            file_name_len
+                        };
+                        // println!("Length-prefix: {:?}", file_name_len);
+
+                        let mut file_name_buf = vec![0u8; file_name_len.try_into().unwrap()];
+                        match socket.read_exact(&mut file_name_buf).await {
+                            Ok(v) => v,
+                            Err(err) => {
+                                eprintln!("Error occured while extracting file name {:?}", err);
+                                push_toast(
+                                    &toasts,
+                                    "An error occurred while extracting data",
+                                    Severity::Error,
+                                );
+                                return;
+                            }
+                        };
+
+                        let file_name = match std::str::from_utf8(&file_name_buf) {
+                            Ok(v) => v,
+                            Err(err) => {
+                                eprintln!("Error occured while extracting file name {:?}", err);
+                                push_toast(
+                                    &toasts,
+                                    "An error occurred while extracting data",
+                                    Severity::Error,
+                                );
+                                return;
+                            }
+                        };
+                        // println!("File name: {:}", file_name);
+
+                        let file_len = match socket.read_i64_le().await {
+                            Ok(v) => v,
+                            Err(err) => {
+                                eprintln!("Error occured while extracting file length {:?}", err);
+                                push_toast(
+                                    &toasts,
+                                    "An error occurred while extracting data",
+                                    Severity::Error,
+                                );
+                                return;
+                            }
+                        };
+                        // println!("Content lenght: {:}", file_len);
+
+                        let hash_len = match socket.read_i32_le().await {
+                            Ok(v) => v,
+                            Err(err) => {
+                                eprintln!("Error occured while extracting hash length {:?}", err);
+                                push_toast(
+                                    &toasts,
+                                    "An error occurred while extracting data",
+                                    Severity::Error,
+                                );
+                                return;
+                            }
+                        };
+                        // println!("Hash lenght: {:}", hash_len);
+
+                        let mut hash_buffer = vec![0_u8; hash_len.try_into().unwrap()];
+                        match socket.read_exact(&mut hash_buffer).await {
+                            Ok(v) => v,
+                            Err(err) => {
+                                eprintln!("Error occured while extracting hash {:?}", err);
+                                push_toast(
+                                    &toasts,
+                                    "An error occurred while extracting data",
+                                    Severity::Error,
+                                );
+                                return;
+                            }
+                        };
+
+                        let hash = String::from_utf8_lossy(&hash_buffer);
+                        // println!("Recieved hash: {:}", hash);
+
+                        let mut encrypted_content = Vec::new();
+                        match socket.read_to_end(&mut encrypted_content).await {
                             Ok(v) => v,
                             Err(err) => {
                                 eprintln!(
-                                    "Error occured while extracting len-prefix of file name: {:?}",
+                                    "Error occured while extracting encrypted content {:?}",
                                     err
                                 );
                                 push_toast(
@@ -901,139 +1005,53 @@ impl State {
                             }
                         };
 
-                        let bytes_to_consume = socket.buffer().len() - buf.len();
-                        socket.consume(bytes_to_consume);
+                        match socket.shutdown().await {
+                            Ok(v) => v,
+                            Err(err) => {
+                                eprintln!(
+                                    "An error occurred while closing the connection: {:?}",
+                                    err
+                                );
+                                push_toast(
+                                    &toasts,
+                                    "An error occurred while closing the connection",
+                                    Severity::Error,
+                                );
+                            }
+                        };
 
-                        file_name_len
-                    };
-                    // println!("Length-prefix: {:?}", file_name_len);
+                        drop(socket);
 
-                    let mut file_name_buf = vec![0u8; file_name_len.try_into().unwrap()];
-                    match socket.read_exact(&mut file_name_buf).await {
-                        Ok(v) => v,
-                        Err(err) => {
-                            eprintln!("Error occured while extracting file name {:?}", err);
-                            push_toast(
-                                &toasts,
-                                "An error occurred while extracting data",
-                                Severity::Error,
-                            );
-                            return;
-                        }
-                    };
+                        let message = "Decrypting...";
+                        println!("{}", message);
+                        push_toast(&toasts, &message, Severity::Info);
 
-                    let file_name = match std::str::from_utf8(&file_name_buf) {
-                        Ok(v) => v,
-                        Err(err) => {
-                            eprintln!("Error occured while extracting file name {:?}", err);
-                            push_toast(
-                                &toasts,
-                                "An error occurred while extracting data",
-                                Severity::Error,
-                            );
-                            return;
-                        }
-                    };
-                    // println!("File name: {:}", file_name);
+                        // println!(
+                        //     "Recived encrypted data:\n {:?}",
+                        //     String::from_utf8_lossy(&encrypted_content)
+                        // );
 
-                    let file_len = match socket.read_i64_le().await {
-                        Ok(v) => v,
-                        Err(err) => {
-                            eprintln!("Error occured while extracting file length {:?}", err);
-                            push_toast(
-                                &toasts,
-                                "An error occurred while extracting data",
-                                Severity::Error,
-                            );
-                            return;
-                        }
-                    };
-                    // println!("Content lenght: {:}", file_len);
+                        let decrypted_file_content = match alg.decrypt(&encrypted_content) {
+                            Ok(v) => v,
+                            Err(err) => {
+                                eprintln!("Error decrypting file content: {:?}", err);
+                                push_toast(&toasts, "Error", Severity::Error);
+                                return;
+                            }
+                        };
 
-                    let hash_len = match socket.read_i32_le().await {
-                        Ok(v) => v,
-                        Err(err) => {
-                            eprintln!("Error occured while extracting hash length {:?}", err);
-                            push_toast(
-                                &toasts,
-                                "An error occurred while extracting data",
-                                Severity::Error,
-                            );
-                            return;
-                        }
-                    };
-                    // println!("Hash lenght: {:}", hash_len);
+                        // println!(
+                        //     "Decrypted data:\n {:?}",
+                        //     String::from_utf8_lossy(&decrypted_file_content)
+                        // );
 
-                    let mut hash_buffer = vec![0_u8; hash_len.try_into().unwrap()];
-                    match socket.read_exact(&mut hash_buffer).await {
-                        Ok(v) => v,
-                        Err(err) => {
-                            eprintln!("Error occured while extracting hash {:?}", err);
-                            push_toast(
-                                &toasts,
-                                "An error occurred while extracting data",
-                                Severity::Error,
-                            );
-                            return;
-                        }
-                    };
-
-                    let hash = String::from_utf8_lossy(&hash_buffer);
-                    // println!("Recieved hash: {:}", hash);
-
-                    let mut encrypted_content = Vec::new();
-                    match socket.read_to_end(&mut encrypted_content).await {
-                        Ok(v) => v,
-                        Err(err) => {
-                            eprintln!("Error occured while extracting encrypted content {:?}", err);
-                            push_toast(
-                                &toasts,
-                                "An error occurred while extracting data",
-                                Severity::Error,
-                            );
-                            return;
-                        }
-                    };
-
-                    match socket.shutdown().await {
-                        Ok(v) => v,
-                        Err(err) => {
-                            eprintln!("An error occurred while closing the connection: {:?}", err);
-                            push_toast(
-                                &toasts,
-                                "An error occurred while closing the connection",
-                                Severity::Error,
-                            );
-                        }
-                    };
-
-                    drop(socket);
-
-                    let message = "Decrypting...";
-                    println!("{}", message);
-                    push_toast(&toasts, &message, Severity::Info);
-
-                    // println!(
-                    //     "Recived encrypted data:\n {:?}",
-                    //     String::from_utf8_lossy(&encrypted_content)
-                    // );
-
-                    let decrypted_file_content = match alg.decrypt(&encrypted_content) {
-                        Ok(v) => v,
-                        Err(err) => {
-                            eprintln!("Error decrypting file content: {:?}", err);
-                            push_toast(&toasts, "Error", Severity::Error);
-                            return;
-                        }
-                    };
-
-                    // println!(
-                    //     "Decrypted data:\n {:?}",
-                    //     String::from_utf8_lossy(&decrypted_file_content)
-                    // );
-
-                    let new_file_path =
-                        match get_new_file_path2(file_name, &dest_dir, Operation::Decrypt).await {
+                        let new_file_path = match get_new_file_path2(
+                            file_name,
+                            &dest_dir,
+                            Operation::Decrypt,
+                        )
+                        .await
+                        {
                             Ok(val) => val,
                             Err(_) => {
                                 push_toast(
@@ -1045,43 +1063,46 @@ impl State {
                             }
                         };
 
-                    let mut new_file = match tokio::fs::File::create(new_file_path).await {
-                        Ok(val) => val,
-                        Err(_) => {
-                            push_toast(
-                                &toasts,
-                                "Couldn't create file to store result into",
-                                Severity::Error,
-                            );
-                            return;
-                        }
-                    };
+                        let mut new_file = match tokio::fs::File::create(new_file_path).await {
+                            Ok(val) => val,
+                            Err(_) => {
+                                push_toast(
+                                    &toasts,
+                                    "Couldn't create file to store result into",
+                                    Severity::Error,
+                                );
+                                return;
+                            }
+                        };
 
-                    match new_file.write_all(&decrypted_file_content).await {
-                        Ok(_) => (),
-                        Err(_) => {
-                            push_toast(
-                                &toasts,
-                                "Error while writing result to the file",
-                                Severity::Error,
-                            );
-                            return;
-                        }
-                    };
+                        match new_file.write_all(&decrypted_file_content).await {
+                            Ok(_) => (),
+                            Err(_) => {
+                                push_toast(
+                                    &toasts,
+                                    "Error while writing result to the file",
+                                    Severity::Error,
+                                );
+                                return;
+                            }
+                        };
 
-                    push_toast(
-                        &toasts,
-                        "Successfully recieved a file over the tcp",
-                        Severity::Success,
-                    );
-                });
-            }
-        });
+                        push_toast(
+                            &toasts,
+                            "Successfully recieved a file over the tcp",
+                            Severity::Success,
+                        );
+                    });
+                }
+            },
+            |_| Message::Tick,
+        )
+        .abortable();
 
         self.tcp.join_handle = Some(handle);
-
         self.tcp.is_listening = true;
-        Task::none()
+
+        task
     }
 
     fn tcp_stop_listening(&mut self) -> Task<Message> {

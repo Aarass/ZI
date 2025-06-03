@@ -2,6 +2,7 @@
 pub struct Rotor {
     pub wiring: [u8; 26],
     pub notch_position: u8,
+    pub ringstellung: u8,
     pub position: usize,
 }
 
@@ -10,6 +11,7 @@ impl Rotor {
         assert!(letter.is_ascii_lowercase());
 
         let index = letter - b'a';
+        let index = (index + 26 - self.ringstellung) % 26;
         let index = (index as usize + self.position) % 26;
 
         return self.wiring[index];
@@ -19,6 +21,7 @@ impl Rotor {
         assert!(letter.is_ascii_lowercase());
 
         let index = self.wiring.iter().position(|el| *el == letter).unwrap();
+        let index = (index + self.ringstellung as usize) % 26;
         let index = (index + (26 - self.position % 26)) % 26;
 
         return b'a' + (index as u8);

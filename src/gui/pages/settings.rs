@@ -9,8 +9,8 @@ use crate::{
     gui::state::{
         args::{EnigmaArgs, XxteaArgs, XxteaCfbArgs},
         messages::{
-            AlgorithmSettingsMessage, EnigmaSettingsMesasge, Message, XxteaCfbSettingsMesasge,
-            XxteaSettingsMesasge,
+            AlgorithmSettingsMessage, EnigmaSettingsMessage, Message, XxteaCfbSettingsMessage,
+            XxteaSettingsMessage,
         },
     },
     State,
@@ -64,7 +64,7 @@ fn enigma_settings(state: &EnigmaArgs) -> Element<Message> {
                     .on_input(|val| {
                         let value = if val.is_empty() { None } else { Some(val) };
                         Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
-                            EnigmaSettingsMesasge::ReflWiringChanged(value),
+                            EnigmaSettingsMessage::ReflWiringChanged(value),
                         ))
                     })
                     .width(Length::Fill)
@@ -78,7 +78,7 @@ fn enigma_settings(state: &EnigmaArgs) -> Element<Message> {
                     .on_input(|val| {
                         let value = if val.is_empty() { None } else { Some(val) };
                         Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
-                            EnigmaSettingsMesasge::Rot1WiringChanged(value),
+                            EnigmaSettingsMessage::Rot1WiringChanged(value),
                         ))
                     })
                     .width(Length::Fill),
@@ -87,15 +87,25 @@ fn enigma_settings(state: &EnigmaArgs) -> Element<Message> {
                         |val| {
                             let value = if val.is_empty() { None } else { Some(val) };
                             Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
-                                EnigmaSettingsMesasge::Rot1NotchChanged(value),
+                                EnigmaSettingsMessage::Rot1NotchChanged(value),
                             ))
                         }
                     ),
-                    text_input("Position", state.rot1_position.as_deref().unwrap_or("")).on_input(
+                    text_input(
+                        "Ringstellung",
+                        state.rot1_ringstellung.as_deref().unwrap_or("")
+                    )
+                    .on_input(|val| {
+                        let value = if val.is_empty() { None } else { Some(val) };
+                        Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
+                            EnigmaSettingsMessage::Rot1RingstellungChanged(value),
+                        ))
+                    }),
+                    text_input("Start", state.rot1_position.as_deref().unwrap_or("")).on_input(
                         |val| {
                             let value = if val.is_empty() { None } else { Some(val) };
                             Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
-                                EnigmaSettingsMesasge::Rot1PositionChanged(value),
+                                EnigmaSettingsMessage::Rot1PositionChanged(value),
                             ))
                         }
                     ),
@@ -111,7 +121,7 @@ fn enigma_settings(state: &EnigmaArgs) -> Element<Message> {
                     .on_input(|val| {
                         let value = if val.is_empty() { None } else { Some(val) };
                         Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
-                            EnigmaSettingsMesasge::Rot2WiringChanged(value),
+                            EnigmaSettingsMessage::Rot2WiringChanged(value),
                         ))
                     })
                     .width(Length::Fill),
@@ -120,15 +130,25 @@ fn enigma_settings(state: &EnigmaArgs) -> Element<Message> {
                         |val| {
                             let value = if val.is_empty() { None } else { Some(val) };
                             Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
-                                EnigmaSettingsMesasge::Rot2NotchChanged(value),
+                                EnigmaSettingsMessage::Rot2NotchChanged(value),
                             ))
                         }
                     ),
-                    text_input("Position", state.rot2_position.as_deref().unwrap_or("")).on_input(
+                    text_input(
+                        "Ringstellung",
+                        state.rot2_ringstellung.as_deref().unwrap_or("")
+                    )
+                    .on_input(|val| {
+                        let value = if val.is_empty() { None } else { Some(val) };
+                        Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
+                            EnigmaSettingsMessage::Rot2RingstellungChanged(value),
+                        ))
+                    }),
+                    text_input("Start", state.rot2_position.as_deref().unwrap_or("")).on_input(
                         |val| {
                             let value = if val.is_empty() { None } else { Some(val) };
                             Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
-                                EnigmaSettingsMesasge::Rot2PositionChanged(value),
+                                EnigmaSettingsMessage::Rot2PositionChanged(value),
                             ))
                         }
                     ),
@@ -144,7 +164,7 @@ fn enigma_settings(state: &EnigmaArgs) -> Element<Message> {
                     .on_input(|val| {
                         let value = if val.is_empty() { None } else { Some(val) };
                         Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
-                            EnigmaSettingsMesasge::Rot3WiringChanged(value),
+                            EnigmaSettingsMessage::Rot3WiringChanged(value),
                         ))
                     })
                     .width(Length::Fill),
@@ -153,15 +173,25 @@ fn enigma_settings(state: &EnigmaArgs) -> Element<Message> {
                         |val| {
                             let value = if val.is_empty() { None } else { Some(val) };
                             Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
-                                EnigmaSettingsMesasge::Rot3NotchChanged(value),
+                                EnigmaSettingsMessage::Rot3NotchChanged(value),
                             ))
                         }
                     ),
-                    text_input("Position", state.rot3_position.as_deref().unwrap_or("")).on_input(
+                    text_input(
+                        "Ringstellung",
+                        state.rot3_ringstellung.as_deref().unwrap_or("")
+                    )
+                    .on_input(|val| {
+                        let value = if val.is_empty() { None } else { Some(val) };
+                        Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
+                            EnigmaSettingsMessage::Rot3RingstellungChanged(value),
+                        ))
+                    }),
+                    text_input("Start", state.rot3_position.as_deref().unwrap_or("")).on_input(
                         |val| {
                             let value = if val.is_empty() { None } else { Some(val) };
                             Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
-                                EnigmaSettingsMesasge::Rot3PositionChanged(value),
+                                EnigmaSettingsMessage::Rot3PositionChanged(value),
                             ))
                         }
                     ),
@@ -181,7 +211,7 @@ fn enigma_settings(state: &EnigmaArgs) -> Element<Message> {
                 .on_input(|val| {
                     let value = if val.is_empty() { None } else { Some(val) };
                     Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Enigma(
-                        EnigmaSettingsMesasge::PlugboardChanged(value),
+                        EnigmaSettingsMessage::PlugboardChanged(value),
                     ))
                 }),
         ]
@@ -199,7 +229,7 @@ fn xxtea_settings(state: &XxteaArgs) -> Element<Message> {
             .on_input(|val| {
                 let value = if val.is_empty() { None } else { Some(val) };
                 Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::Xxtea(
-                    XxteaSettingsMesasge::KeyChanged(value),
+                    XxteaSettingsMessage::KeyChanged(value),
                 ))
             })
             .width(Length::Fill),
@@ -217,7 +247,7 @@ fn xxtea_cfb_settings(state: &XxteaCfbArgs) -> Element<Message> {
                     .on_input(|val| {
                         let value = if val.is_empty() { None } else { Some(val) };
                         Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::XxteaCfb(
-                            XxteaCfbSettingsMesasge::IVChanged(value),
+                            XxteaCfbSettingsMessage::IVChanged(value),
                         ))
                     })
                     .width(Length::Fill),
@@ -230,7 +260,7 @@ fn xxtea_cfb_settings(state: &XxteaCfbArgs) -> Element<Message> {
                     .on_input(|val| {
                         let value = if val.is_empty() { None } else { Some(val) };
                         Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::XxteaCfb(
-                            XxteaCfbSettingsMesasge::BlockSizeChanged(value),
+                            XxteaCfbSettingsMessage::BlockSizeChanged(value),
                         ))
                     })
                     .width(100)
@@ -245,7 +275,7 @@ fn xxtea_cfb_settings(state: &XxteaCfbArgs) -> Element<Message> {
                 .on_input(|val| {
                     let value = if val.is_empty() { None } else { Some(val) };
                     Message::AlgorithmSettingsChanged(AlgorithmSettingsMessage::XxteaCfb(
-                        XxteaCfbSettingsMesasge::KeyChanged(value),
+                        XxteaCfbSettingsMessage::KeyChanged(value),
                     ))
                 })
                 .width(Length::Fill)

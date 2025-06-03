@@ -13,7 +13,8 @@ async fn main() -> std::result::Result<(), iced::Error> {
     let icon = window::icon::from_file_data(include_bytes!("../assets/icon.png"), None).ok();
 
     let app = iced::application("ZI", State::update, State::view)
-        .theme(|_| iced::Theme::SolarizedDark)
+        .theme(|_| iced::Theme::TokyoNightStorm)
+        .executor::<tokio::runtime::Runtime>()
         .window(window::Settings {
             icon,
             ..Default::default()

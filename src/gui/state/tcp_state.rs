@@ -1,5 +1,5 @@
+use iced::task::Handle;
 use std::path::PathBuf;
-use tokio::task::JoinHandle;
 
 pub struct TcpState {
     pub mode: TcpMode,
@@ -13,7 +13,7 @@ pub struct TcpState {
     pub my_port: Option<u16>,
     pub is_listening: bool,
 
-    pub join_handle: Option<JoinHandle<()>>,
+    pub join_handle: Option<Handle>,
 }
 
 #[derive(Default)]
