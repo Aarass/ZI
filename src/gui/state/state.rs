@@ -751,7 +751,7 @@ impl State {
                         match stream.write_all(&hash).await {
                             Ok(_) => {
                                 println!(
-                                    "Successfully sent hash:\n {}",
+                                    "Successfully sent hash:\n {:?}",
                                     String::from_utf8_lossy(&hash)
                                 );
                             }
@@ -943,7 +943,7 @@ impl State {
                         };
                         // println!("File name: {:}", file_name);
 
-                        let file_len = match socket.read_i64_le().await {
+                        let _file_len = match socket.read_i64_le().await {
                             Ok(v) => v,
                             Err(err) => {
                                 eprintln!("Error occured while extracting file length {:?}", err);
@@ -985,9 +985,6 @@ impl State {
                             }
                         };
 
-                        let hash = String::from_utf8_lossy(&hash_buffer);
-                        // println!("Recieved hash: {:}", hash);
-
                         let mut encrypted_content = Vec::new();
                         match socket.read_to_end(&mut encrypted_content).await {
                             Ok(v) => v,
@@ -1022,6 +1019,20 @@ impl State {
 
                         drop(socket);
 
+                        let recalculated_hash = hash::hash_data(&encrypted_content);
+
+                        // let hash = String::from_utf8_lossy(&hash_buffer);
+                        // println!("Recieved hash: --{:?}--", hash);
+                        //
+                        // let hash = String::from_utf8_lossy(&recalculated_hash);
+                        // println!("Recieved hash: --{:?}--", hash);
+
+                        if hash_buffer.ne(&recalculated_hash) {
+                            eprintln!("Hash missmatch");
+                            push_toast(&toasts, "Hash missmatch", Severity::Error);
+                            return;
+                        }
+
                         let message = "Decrypting...";
                         println!("{}", message);
                         push_toast(&toasts, &message, Severity::Info);
@@ -1039,6 +1050,17 @@ impl State {
                                 return;
                             }
                         };
+
+                        println!(
+                            "Recieved: {}",
+                            String::from_utf8_lossy(&decrypted_file_content)
+                        );
+
+                        push_toast(
+                            &toasts,
+                            "Successfully recieved a file over the tcp",
+                            Severity::Success,
+                        );
 
                         // println!(
                         //     "Decrypted data:\n {:?}",
@@ -1089,7 +1111,7 @@ impl State {
 
                         push_toast(
                             &toasts,
-                            "Successfully recieved a file over the tcp",
+                            "Successfully processed a file sent over tcp",
                             Severity::Success,
                         );
                     });
